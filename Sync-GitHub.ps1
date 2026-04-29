@@ -40,6 +40,8 @@ if (-not [string]::IsNullOrWhiteSpace($changes)) {
     $remote = (git -C "$PublishRepoPath" remote)
     if ([string]::IsNullOrWhiteSpace($remote)) {
         try { & $gh repo view $GitHubRepo | Out-Null; git -C "$PublishRepoPath" remote add origin "https://github.com/$GitHubRepo.git" } catch { }
+    } else {
+        try { git -C "$PublishRepoPath" remote set-url origin "https://github.com/$GitHubRepo.git" } catch { }
     }
     git -C "$PublishRepoPath" push -u origin master | Out-Null
 }

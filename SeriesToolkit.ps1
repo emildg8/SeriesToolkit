@@ -12,14 +12,11 @@ param(
     [switch]$DryRun,
     [switch]$UseTmdb,
     [string]$TmdbApiKey = '',
-    [switch]$SkipAutoVersion
+    [switch]$SkipAutoVersion,
+    [switch]$SkipAutoSync
 )
 
-$legacyScript = $null
-$candidates = @(Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter '*SeriesToolkit*.ps1' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'SeriesToolkit.ps1' -and $_.Name -ne 'Start-SeriesToolkitGui.ps1' -and $_.Name -ne 'Start-SeriesToolkitGui.Engine.ps1' })
-if ($candidates.Count -gt 0) {
-    $legacyScript = $candidates[0].FullName
-}
+$legacyScript = Join-Path $PSScriptRoot 'SeriesToolkit.Engine.ps1'
 if ($null -eq $legacyScript -or -not (Test-Path -LiteralPath $legacyScript)) {
     throw "Engine script not found next to launcher."
 }
@@ -41,9 +38,10 @@ $runArgs = @{}
 foreach ($k in $PSBoundParameters.Keys) { $runArgs[$k] = $PSBoundParameters[$k] }
 $runArgs['LogDirectory'] = $LogDirectory
 $null = $runArgs.Remove('SkipAutoVersion')
+$null = $runArgs.Remove('SkipAutoSync')
 & $legacyScript @runArgs
 
 $syncScript = Join-Path $PSScriptRoot 'Sync-GitHub.ps1'
-if (Test-Path -LiteralPath $syncScript) {
+if ((-not $SkipAutoSync) -and (Test-Path -LiteralPath $syncScript)) {
     try { & $syncScript -ProjectRoot $PSScriptRoot } catch { }
 }
