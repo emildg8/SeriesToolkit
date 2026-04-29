@@ -115,3 +115,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-SeriesToolkitExe.ps1
 - Версия хранится в `version.json`.
 - Инкремент SemVer: `0.0.9 -> 0.1.0`, `0.9.9 -> 1.0.0`.
 - Новые записи в `CHANGELOG.md` всегда добавляются сверху.
+
+## Скачивание старых версий
+
+Чтобы всегда можно было откатиться к рабочей версии:
+
+- в GitHub созданы теги и релизы (`v0.0.1`, `v0.0.3`, `v0.0.4`);
+- у каждого релиза есть свой ZIP-архив исходников в состоянии этой версии;
+- внутри архива находятся соответствующие версии `README.md` и `CHANGELOG.md`.
+
+Релизы: [https://github.com/emildg8/CartoonSeriesToolkit/releases](https://github.com/emildg8/CartoonSeriesToolkit/releases)
