@@ -2,8 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$ProjectRoot = '',
-    [string]$PublishRepoPath = 'D:/Dev/Script_Rename_ALLVideo/.publish/CartoonSeriesToolkit',
-    [string]$GitHubRepo = 'emildg8/CartoonSeriesToolkit',
+    [string]$PublishRepoPath = 'D:/Dev/Script_Rename_ALLVideo/.publish/SeriesToolkit',
+    [string]$GitHubRepo = 'emildg8/SeriesToolkit',
     [string]$GistId = '2bf8d27559d9caf2abaa15bfe5c97ac6'
 )
 
@@ -51,9 +51,9 @@ try {
         (Join-Path $ProjectRoot 'CHANGELOG.md') `
         (Join-Path $ProjectRoot 'version.json') `
         (Join-Path $ProjectRoot 'SeriesToolkit.ps1') `
-        (Join-Path $ProjectRoot 'CartoonSeriesToolkit.ps1') `
+        (Join-Path $ProjectRoot 'SeriesToolkit.Engine.ps1') `
         (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1') `
-        (Join-Path $ProjectRoot 'Start-CartoonSeriesToolkitGui.ps1') `
+        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1') `
         (Join-Path $ProjectRoot 'UiStrings.ps1') `
         (Join-Path $ProjectRoot 'Bump-Version.ps1') `
         --desc "SeriesToolkit auto-sync v$version" | Out-Null

@@ -15,9 +15,13 @@ param(
     [switch]$SkipAutoVersion
 )
 
-$legacyScript = Join-Path $PSScriptRoot 'CartoonSeriesToolkit.ps1'
-if (-not (Test-Path -LiteralPath $legacyScript)) {
-    throw "Legacy engine not found: $legacyScript"
+$legacyScript = $null
+$candidates = @(Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter '*SeriesToolkit*.ps1' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'SeriesToolkit.ps1' -and $_.Name -ne 'Start-SeriesToolkitGui.ps1' -and $_.Name -ne 'Start-SeriesToolkitGui.Engine.ps1' })
+if ($candidates.Count -gt 0) {
+    $legacyScript = $candidates[0].FullName
+}
+if ($null -eq $legacyScript -or -not (Test-Path -LiteralPath $legacyScript)) {
+    throw "Engine script not found next to launcher."
 }
 
 if ([string]::IsNullOrWhiteSpace($LogDirectory)) {

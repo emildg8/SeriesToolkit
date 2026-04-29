@@ -1,8 +1,8 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$PublishRepoPath = 'D:/Dev/Script_Rename_ALLVideo/.publish/CartoonSeriesToolkit',
-    [string]$Repo = 'emildg8/CartoonSeriesToolkit',
+    [string]$PublishRepoPath = 'D:/Dev/Script_Rename_ALLVideo/.publish/SeriesToolkit',
+    [string]$Repo = 'emildg8/SeriesToolkit',
     [string]$OutputDir = ''
 )
 

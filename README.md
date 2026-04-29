@@ -90,12 +90,7 @@ setx TMDB_API_KEY "ВАШ_КЛЮЧ"
 
 ## Обратная совместимость
 
-Старые файлы-лаунчеры сохранены:
-
-- `CartoonSeriesToolkit.ps1`
-- `Start-CartoonSeriesToolkitGui.ps1`
-
-Новые рекомендуемые точки входа:
+Точки входа:
 
 - `SeriesToolkit.ps1`
 - `Start-SeriesToolkitGui.ps1`
@@ -124,4 +119,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-SeriesToolkitExe.ps1
 - у каждого релиза есть свой ZIP-архив исходников в состоянии этой версии;
 - внутри архива находятся соответствующие версии `README.md` и `CHANGELOG.md`.
 
-Релизы: [https://github.com/emildg8/CartoonSeriesToolkit/releases](https://github.com/emildg8/CartoonSeriesToolkit/releases)
+Релизы: [https://github.com/emildg8/SeriesToolkit/releases](https://github.com/emildg8/SeriesToolkit/releases)
