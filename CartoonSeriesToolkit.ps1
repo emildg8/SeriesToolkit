@@ -17,15 +17,46 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+try {
+    $fetchModule = Join-Path (Split-Path -Parent $PSScriptRoot) 'Fetch-VideoMetadata.ps1'
+    if (-not (Test-Path -LiteralPath $fetchModule)) {
+        $fetchModule = Join-Path $PSScriptRoot 'Fetch-VideoMetadata.ps1'
+    }
+    if (Test-Path -LiteralPath $fetchModule) {
+        . $fetchModule
+    }
+} catch { }
+
+function Get-TmdbApiKeyFromEnvironment {
+    foreach ($name in @('TMDB_API_KEY', 'RENAME_VIDEO_TMDB_API_KEY', 'THEMOVIEDB_API_KEY')) {
+        foreach ($scope in @('User', 'Machine', 'Process')) {
+            $v = [Environment]::GetEnvironmentVariable($name, $scope)
+            if (-not [string]::IsNullOrWhiteSpace($v)) { return $v.Trim() }
+        }
+    }
+    return $null
+}
+
 if ($Apply -and $DryRun) { throw 'Нельзя одновременно указывать -Apply и -DryRun.' }
 if (-not $Apply) { $DryRun = $true }
-if ([string]::IsNullOrWhiteSpace($LogDirectory)) { $LogDirectory = Join-Path $PSScriptRoot 'logs' }
+if ([string]::IsNullOrWhiteSpace($LogDirectory)) { $LogDirectory = Join-Path $PSScriptRoot 'LOGS' }
 if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null }
+
+$script:ToolkitVersion = '0.0.0'
+try {
+    $vf = Join-Path $PSScriptRoot 'version.json'
+    if (Test-Path -LiteralPath $vf) {
+        $vo = Get-Content -LiteralPath $vf -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($vo.version) { $script:ToolkitVersion = [string]$vo.version }
+    }
+} catch { }
 
 $script:Records = [System.Collections.Generic.List[object]]::new()
 $script:TmdbEpisodeCache = @{}
-$script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { [Environment]::GetEnvironmentVariable('TMDB_API_KEY', 'User') }
-$script:TmdbEnabled = [bool]$UseTmdb -and -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
+$script:SeriesTitlesCache = @{}
+$script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
+$script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
+if ($UseTmdb) { $script:TmdbEnabled = $true }
 
 function Add-Record {
     param(
@@ -52,6 +83,32 @@ function ConvertTo-SafeName([string]$Value) {
     $name = $name.Trim().TrimEnd('.', ' ')
     if ($name.Length -gt 180) { $name = $name.Substring(0, 180).TrimEnd('.', ' ') }
     return $name
+}
+
+function Normalize-ForTmdbSearch([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $t = $Text.ToLowerInvariant()
+    $t = $t -replace '[\(\)\[\]\{\}]', ' '
+    $t = $t -replace '[\._\-]+', ' '
+    $t = $t -replace '\s+', ' '
+    return $t.Trim()
+}
+
+function Get-TmdbScore([string]$Expected, [string]$CandidateRu, [string]$CandidateOrig) {
+    $e = Normalize-ForTmdbSearch $Expected
+    $r = Normalize-ForTmdbSearch $CandidateRu
+    $o = Normalize-ForTmdbSearch $CandidateOrig
+    $score = 0
+    if (-not [string]::IsNullOrWhiteSpace($e)) {
+        if ($r -eq $e -or $o -eq $e) { $score += 1000 }
+        if ($r.Contains($e) -or $e.Contains($r)) { $score += 300 }
+        if ($o.Contains($e) -or $e.Contains($o)) { $score += 250 }
+        foreach ($w in ($e -split '\s+')) {
+            if ($w.Length -lt 3) { continue }
+            if ($r.Contains($w) -or $o.Contains($w)) { $score += 12 }
+        }
+    }
+    return $score
 }
 
 function Get-SeasonFolderName([int]$SeasonNumber) { return "Сезон $SeasonNumber" }
@@ -220,7 +277,81 @@ function Invoke-TmdbEpisodeNameLookup([string]$SeriesName, [int]$Season, [int]$E
     }
 }
 
-function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
+function Get-TmdbEpisodeMapForSeries([string]$SeriesName) {
+    $key = Normalize-ForTmdbSearch $SeriesName
+    if ($script:SeriesTitlesCache.ContainsKey($key)) { return $script:SeriesTitlesCache[$key] }
+    $map = @{}
+    if (-not $script:TmdbEnabled) { $script:SeriesTitlesCache[$key] = $map; return $map }
+    try {
+        $searchUri = 'https://api.themoviedb.org/3/search/tv?api_key=' + [Uri]::EscapeDataString($script:TmdbApiKeyEffective) + '&language=ru-RU&query=' + [Uri]::EscapeDataString($SeriesName)
+        $search = Invoke-RestMethod -Uri $searchUri -Method Get -TimeoutSec 25
+        if (-not $search.results -or $search.results.Count -eq 0) { $script:SeriesTitlesCache[$key] = $map; return $map }
+        $pick = $null
+        $best = -1
+        foreach ($r in @($search.results | Select-Object -First 8)) {
+            $sc = Get-TmdbScore -Expected $SeriesName -CandidateRu ([string]$r.name) -CandidateOrig ([string]$r.original_name)
+            if ($null -ne $r.popularity) { $sc += [int][Math]::Round([double]$r.popularity) }
+            if ($sc -gt $best) { $best = $sc; $pick = $r }
+        }
+        if (-not $pick) { $script:SeriesTitlesCache[$key] = $map; return $map }
+        $tvId = [int]$pick.id
+        $detailsUri = 'https://api.themoviedb.org/3/tv/' + $tvId + '?api_key=' + [Uri]::EscapeDataString($script:TmdbApiKeyEffective) + '&language=ru-RU'
+        $details = Invoke-RestMethod -Uri $detailsUri -Method Get -TimeoutSec 25
+        $seasonNumbers = @()
+        if ($details.seasons) {
+            foreach ($s in @($details.seasons)) {
+                if ($null -eq $s.season_number) { continue }
+                $sn = [int]$s.season_number
+                if ($sn -gt 0) { $seasonNumbers += $sn }
+            }
+        }
+        foreach ($sn in ($seasonNumbers | Sort-Object -Unique)) {
+            try {
+                $sUri = 'https://api.themoviedb.org/3/tv/' + $tvId + '/season/' + $sn + '?api_key=' + [Uri]::EscapeDataString($script:TmdbApiKeyEffective) + '&language=ru-RU'
+                $sData = Invoke-RestMethod -Uri $sUri -Method Get -TimeoutSec 25
+                foreach ($ep in @($sData.episodes)) {
+                    if ($null -eq $ep.episode_number) { continue }
+                    $en = [int]$ep.episode_number
+                    if ($en -le 0) { continue }
+                    $title = ConvertTo-SafeName ([string]$ep.name)
+                    if ([string]::IsNullOrWhiteSpace($title)) { continue }
+                    $map["$sn|$en"] = $title
+                }
+            } catch { }
+        }
+    } catch { }
+    $script:SeriesTitlesCache[$key] = $map
+    return $map
+}
+
+function Merge-EpisodeTitleMaps([hashtable]$Primary, [hashtable]$Fallback) {
+    $merged = @{}
+    foreach ($k in $Fallback.Keys) { $merged[$k] = $Fallback[$k] }
+    foreach ($k in $Primary.Keys) { $merged[$k] = $Primary[$k] }
+    return $merged
+}
+
+function Get-WikiEpisodeMapForSeries([string]$SeriesName) {
+    $map = @{}
+    if ([string]::IsNullOrWhiteSpace($SeriesName)) { return $map }
+    if (-not (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue)) { return $map }
+    try {
+        $items = Get-EpisodesFromWikipediaSearchQueries $SeriesName
+        foreach ($it in @($items)) {
+            if ($null -eq $it) { continue }
+            $sn = if ($null -ne $it.season) { [int]$it.season } else { 0 }
+            $en = if ($null -ne $it.episode) { [int]$it.episode } else { 0 }
+            if ($sn -le 0 -or $en -le 0) { continue }
+            $tt = if ($null -ne $it.title) { [string]$it.title } else { '' }
+            $tt = ConvertTo-SafeName $tt
+            if ([string]::IsNullOrWhiteSpace($tt)) { continue }
+            $map["$sn|$en"] = $tt
+        }
+    } catch { }
+    return $map
+}
+
+function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$EpisodeTitlesMap) {
     $plan = [System.Collections.Generic.List[object]]::new()
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
     $files = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
@@ -259,7 +390,7 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
         $code = ('S{0:00}E{1:00}' -f $tag.Season, $tag.Episode)
         $title = $null
         $hKey = "$($tag.Season)|$($tag.Episode)"
-        if ($HtmlTitles.ContainsKey($hKey)) { $title = $HtmlTitles[$hKey] }
+        if ($EpisodeTitlesMap.ContainsKey($hKey)) { $title = $EpisodeTitlesMap[$hKey] }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = Invoke-TmdbEpisodeNameLookup -SeriesName $seriesName -Season $tag.Season -Episode $tag.Episode }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = "Серия $($tag.Episode)" }
         $newBase = ConvertTo-SafeName("$seriesName - $code - $title")
@@ -350,12 +481,36 @@ function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
     }
 }
 
+function Remove-EmptyDirectories([System.IO.DirectoryInfo]$SeriesDir) {
+    $dirs = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Directory -Recurse -ErrorAction SilentlyContinue | Sort-Object { $_.FullName.Length } -Descending)
+    foreach ($d in $dirs) {
+        $items = @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue)
+        if ($items.Count -gt 0) { continue }
+        if ($DryRun) {
+            Add-Record -Series $SeriesDir.Name -Action 'remove-empty-folder' -Status 'DRYRUN' -SourcePath $d.FullName
+        } else {
+            try {
+                Remove-Item -LiteralPath $d.FullName -Force
+                Add-Record -Series $SeriesDir.Name -Action 'remove-empty-folder' -Status 'OK' -SourcePath $d.FullName
+            } catch {
+                Add-Record -Series $SeriesDir.Name -Action 'remove-empty-folder' -Status 'WARN' -SourcePath $d.FullName -Details $_.Exception.Message
+            }
+        }
+    }
+}
+
 function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
     Normalize-SeasonFolderNames -SeriesDir $SeriesDir
-    $plan = Build-RenamePlanForSeries -SeriesDir $SeriesDir -HtmlTitles $HtmlTitles
+    $seriesName = ConvertTo-SafeName $SeriesDir.Name
+    $tmdbTitles = Get-TmdbEpisodeMapForSeries -SeriesName $seriesName
+    $wikiTitles = Get-WikiEpisodeMapForSeries -SeriesName $seriesName
+    $tmdbAndWiki = Merge-EpisodeTitleMaps -Primary $wikiTitles -Fallback $tmdbTitles
+    $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $tmdbAndWiki
+    $plan = Build-RenamePlanForSeries -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Resolve-TargetConflicts -Plan $plan
     Ensure-SeasonFolders -Plan $plan -SeriesName $SeriesDir.Name
     Apply-Plan -Plan $plan
+    Remove-EmptyDirectories -SeriesDir $SeriesDir
 }
 
 if (Test-Path -LiteralPath $ReferenceRootPath) {
@@ -381,8 +536,8 @@ if ($Mode -eq 'Manual') {
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $modeTag = if ($DryRun) { 'dryrun' } else { 'apply' }
-$csvPath = Join-Path $LogDirectory ("cartoons-toolkit-$($Mode.ToLowerInvariant())-$modeTag-$stamp.csv")
-$txtPath = Join-Path $LogDirectory ("cartoons-toolkit-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
+$csvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.csv")
+$txtPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
 $script:Records | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
 
 $warn = @($script:Records | Where-Object { $_.status -eq 'WARN' }).Count

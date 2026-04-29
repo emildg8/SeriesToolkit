@@ -6,9 +6,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $uiPath = Join-Path $PSScriptRoot 'UiStrings.ps1'
-$enginePath = Join-Path $PSScriptRoot 'CartoonSeriesToolkit.ps1'
+$enginePath = Join-Path $PSScriptRoot 'SeriesToolkit.ps1'
 if (-not (Test-Path -LiteralPath $uiPath)) { throw "UiStrings.ps1 not found: $uiPath" }
-if (-not (Test-Path -LiteralPath $enginePath)) { throw "CartoonSeriesToolkit.ps1 not found: $enginePath" }
+if (-not (Test-Path -LiteralPath $enginePath)) { throw "SeriesToolkit.ps1 not found: $enginePath" }
 . $uiPath
 
 Add-Type -AssemblyName System.Windows.Forms

@@ -4,7 +4,7 @@ function Get-ToolkitStrings {
     param([ValidateSet('ru', 'en')][string]$Lang = 'ru')
 
     $ru = @{
-        AppTitle               = 'Cartoon Series Toolkit'
+        AppTitle               = 'SeriesToolkit'
         BatchMode              = 'Массовый режим'
         ManualMode             = 'Один сериал (HTML/TMDB)'
         RootPath               = 'Папка библиотеки'
@@ -21,7 +21,7 @@ function Get-ToolkitStrings {
     }
 
     $en = @{
-        AppTitle               = 'Cartoon Series Toolkit'
+        AppTitle               = 'SeriesToolkit'
         BatchMode              = 'Batch Mode'
         ManualMode             = 'Single Series (HTML/TMDB)'
         RootPath               = 'Library Folder'
