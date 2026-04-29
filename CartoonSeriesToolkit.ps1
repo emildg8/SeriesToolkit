@@ -88,6 +88,9 @@ function Resolve-EpisodeTagFromName([string]$Name, $InferredSeason) {
         @{ Re = '(?i)S(?<s>\d{1,2})[ ._-]*E(?<e>\d{1,3})'; Score = 100; Kind = 'SxxEyy' },
         @{ Re = '(?i)(?<!\d)(?<s>\d{1,2})x(?<e>\d{2,3})(?!\d)'; Score = 90; Kind = 'NxNN' },
         @{ Re = '(?i)season[\s._-]*(?<s>\d{1,2})[\s._-]*episode[\s._-]*(?<e>\d{1,3})'; Score = 95; Kind = 'SeasonEpisode' },
+        @{ Re = '(?i)(?<s>\d{1,2})\s*ACV\s*(?<e>\d{2})'; Score = 96; Kind = 'ACVCode' },
+        @{ Re = '(?i)(?<s>\d{1,2})[._\s-]*sezon[._\s-]*(?<e>\d{1,3})[._\s-]*(?:seriya|serii)'; Score = 95; Kind = 'TranslitSezonSeriya' },
+        @{ Re = '(?i)(?<s>\d{1,2})[._\s-]*сезон[._\s-]*(?<e>\d{1,3})[._\s-]*(?:серия|серии)'; Score = 95; Kind = 'RuSezonSeriya' },
         @{ Re = '(?i)\[(?<e>\d{1,3})\]'; Score = 70; Kind = '[NN]' },
         @{ Re = '(?i)\((?<e>\d{1,3})\)'; Score = 65; Kind = '(NN)' },
         @{ Re = '(?i)(?:^|[^0-9])ep(?:isode)?[\s._-]*(?<e>\d{1,3})(?:[^0-9]|$)'; Score = 75; Kind = 'EPnn' },
@@ -126,7 +129,58 @@ function Resolve-EpisodeTagFromName([string]$Name, $InferredSeason) {
             }
         }
     }
+    if ($null -eq $best -and $null -ne $InferredSeason -and [int]$InferredSeason -gt 0) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+        if ($base -match '(?i)(?:^|[\s._-])(?<e>\d{1,3})$') {
+            $ep = [int]$Matches['e']
+            if ($ep -ge 1 -and $ep -le 200) {
+                $best = @{ Season = [int]$InferredSeason; Episode = $ep; Score = 74; Pattern = 'TrailingEpisodeNumber' }
+            }
+        }
+    }
+    if ($null -eq $best) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+        if ($base -match '(?i)(?:^|[\s._-]|x-)(?<e>\d{1,3})(?:$|[\s._-])') {
+            $ep = [int]$Matches['e']
+            if ($ep -ge 1 -and $ep -le 200 -and $ep -notin @(480, 540, 720, 1080, 1440, 2160, 4320)) {
+                $season = if ($null -ne $InferredSeason -and [int]$InferredSeason -gt 0) { [int]$InferredSeason } else { 1 }
+                $best = @{ Season = $season; Episode = $ep; Score = 70; Pattern = 'GenericEpisodeNumber' }
+            }
+        }
+    }
     return $best
+}
+
+function Get-InferredEpisodeFromPath([string]$FileDirectoryPath, [string]$SeriesRootPath) {
+    if ([string]::IsNullOrWhiteSpace($FileDirectoryPath)) { return $null }
+    $current = [System.IO.Path]::GetFullPath($FileDirectoryPath)
+    $seriesRoot = [System.IO.Path]::GetFullPath($SeriesRootPath)
+    while ($current -and $current.StartsWith($seriesRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $leaf = Split-Path -Path $current -Leaf
+        if ($leaf -match '^(?<e>\d{1,3})(?:[\s._-]|$)') {
+            $ep = [int]$Matches['e']
+            if ($ep -ge 1 -and $ep -le 999) { return $ep }
+        }
+        $parent = Split-Path -Path $current -Parent
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) { break }
+        $current = $parent
+    }
+    return $null
+}
+
+function Test-LooksLikeExtraVideo([string]$FullPath, [string]$FileNameNoExt) {
+    $pathL = $FullPath.ToLowerInvariant()
+    $nameL = $FileNameNoExt.ToLowerInvariant()
+    $extraWords = @(
+        'opening', 'ending', 'trailer', 'тизер', 'teaser', 'preview', 'promo', 'pv', 'cm',
+        'logo', 'intro', 'outro', 'op', 'ed', 'credit', 'credits', 'menu', 'bonus',
+        'special', 'featurette', 'behind', 'making', 'movie', 'film', 'theme',
+        'benders.big.score', 'billion.backs', 'wild.green.yonder', 'benders.game'
+    )
+    foreach ($w in $extraWords) {
+        if ($pathL.Contains($w) -or $nameL -match ("(?<!\w){0}(?!\w)" -f [regex]::Escape($w))) { return $true }
+    }
+    return $false
 }
 
 function Extract-EpisodeTitleFromHtml([string]$HtmlPath) {
@@ -175,7 +229,26 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
         $infSeason = Get-InferredSeasonFromFilePath -FileDirectoryPath $f.DirectoryName -SeriesRootPath $SeriesDir.FullName
         $tag = Resolve-EpisodeTagFromName -Name $f.Name -InferredSeason $infSeason
         if (-not $tag) {
-            Add-Record -Series $SeriesDir.Name -Action 'skip-file' -Status 'WARN' -SourcePath $f.FullName -Details 'Не найден шаблон сезона/серии.'
+            $nameNoExt = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+            if ($nameNoExt -match '^(?<e>\d{1,3})(?:-?я)?[)\].\s_-]?') {
+                $sFallback = if ($null -ne $infSeason -and [int]$infSeason -gt 0) { [int]$infSeason } else { 1 }
+                $tag = @{ Season = $sFallback; Episode = [int]$Matches['e']; Score = 78; Pattern = 'LeadingEpisodeNumber' }
+            }
+        }
+        if (-not $tag) {
+            $epFromPath = Get-InferredEpisodeFromPath -FileDirectoryPath $f.DirectoryName -SeriesRootPath $SeriesDir.FullName
+            if ($null -ne $epFromPath) {
+                $sFallback = if ($null -ne $infSeason -and [int]$infSeason -gt 0) { [int]$infSeason } else { 1 }
+                $tag = @{ Season = $sFallback; Episode = [int]$epFromPath; Score = 72; Pattern = 'FolderEpisodeNumber' }
+            }
+        }
+        if (-not $tag) {
+            $fileNoExt = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+            if ($fileNoExt -notmatch '\d' -or (Test-LooksLikeExtraVideo -FullPath $f.FullName -FileNameNoExt $fileNoExt)) {
+                Add-Record -Series $SeriesDir.Name -Action 'skip-file' -Status 'INFO' -SourcePath $f.FullName -Details 'Похоже на доп.видео (opening/trailer/credits), пропущено без предупреждения.'
+            } else {
+                Add-Record -Series $SeriesDir.Name -Action 'skip-file' -Status 'WARN' -SourcePath $f.FullName -Details 'Не найден шаблон сезона/серии.'
+            }
             continue
         }
         if ($tag.Score -lt 65) {
@@ -246,7 +319,7 @@ function Normalize-SeasonFolderNames([System.IO.DirectoryInfo]$SeriesDir) {
         if ($d.Name -ceq $expected) { continue }
         $target = Join-Path $SeriesDir.FullName $expected
         if (Test-Path -LiteralPath $target) {
-            Add-Record -Series $SeriesDir.Name -Action 'rename-season-folder' -Status 'WARN' -SourcePath $d.FullName -TargetPath $target -Details 'Цель уже существует.'
+            Add-Record -Series $SeriesDir.Name -Action 'rename-season-folder' -Status 'INFO' -SourcePath $d.FullName -TargetPath $target -Details 'Цель уже существует.'
             continue
         }
         if ($DryRun) {
