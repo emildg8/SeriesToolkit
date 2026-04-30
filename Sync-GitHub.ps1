@@ -21,6 +21,15 @@ if (-not (Test-Path -LiteralPath $PublishRepoPath)) {
     git init "$PublishRepoPath" | Out-Null
 }
 
+function Ensure-OriginRemote {
+    $remote = (git -C "$PublishRepoPath" remote)
+    if ([string]::IsNullOrWhiteSpace($remote)) {
+        try { & $gh repo view $GitHubRepo | Out-Null; git -C "$PublishRepoPath" remote add origin "https://github.com/$GitHubRepo.git" } catch { }
+    } else {
+        try { git -C "$PublishRepoPath" remote set-url origin "https://github.com/$GitHubRepo.git" } catch { }
+    }
+}
+
 Copy-Item -Path (Join-Path $ProjectRoot '*') -Destination $PublishRepoPath -Recurse -Force
 # Секреты только локально — никогда не публиковать на GitHub
 foreach ($secret in @('SeriesToolkit.settings.json', '.env', 'secrets.json', 'tmdb.key', 'kinopoisk.cookie.txt')) {
@@ -48,12 +57,7 @@ git -C "$PublishRepoPath" add . | Out-Null
 $changes = (git -C "$PublishRepoPath" status --porcelain)
 if (-not [string]::IsNullOrWhiteSpace($changes)) {
     git -C "$PublishRepoPath" commit -m "Auto sync SeriesToolkit v$version" | Out-Null
-    $remote = (git -C "$PublishRepoPath" remote)
-    if ([string]::IsNullOrWhiteSpace($remote)) {
-        try { & $gh repo view $GitHubRepo | Out-Null; git -C "$PublishRepoPath" remote add origin "https://github.com/$GitHubRepo.git" } catch { }
-    } else {
-        try { git -C "$PublishRepoPath" remote set-url origin "https://github.com/$GitHubRepo.git" } catch { }
-    }
+    Ensure-OriginRemote
     git -C "$PublishRepoPath" push -u origin master | Out-Null
     if (-not [string]::IsNullOrWhiteSpace($SecondaryRemoteUrl) -and -not [string]::IsNullOrWhiteSpace($SecondaryRemoteName)) {
         $remotes = @((git -C "$PublishRepoPath" remote) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -65,6 +69,41 @@ if (-not [string]::IsNullOrWhiteSpace($changes)) {
         git -C "$PublishRepoPath" push -u $SecondaryRemoteName master | Out-Null
     }
 }
+
+# Автоматический релиз текущей версии (tag + release + zip asset)
+try {
+    if ($version -match '^\d+\.\d+\.\d+$') {
+        Ensure-OriginRemote
+        $tag = "v$version"
+        $head = (git -C "$PublishRepoPath" rev-parse HEAD).Trim()
+        $existsTag = (git -C "$PublishRepoPath" tag --list $tag)
+        if ([string]::IsNullOrWhiteSpace($existsTag)) {
+            git -C "$PublishRepoPath" tag $tag $head
+        }
+        git -C "$PublishRepoPath" push origin $tag | Out-Null
+
+        $releasesDir = Join-Path $ProjectRoot 'RELEASES'
+        if (-not (Test-Path -LiteralPath $releasesDir)) { New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null }
+        $zip = Join-Path $releasesDir ("SeriesToolkit-{0}.zip" -f $version)
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
+
+        $body = @"
+Автоматический релиз SeriesToolkit $version.
+
+Состав:
+- исходники toolkit в состоянии тега $tag;
+- README/CHANGELOG/version.json текущей версии;
+- zip-архив для быстрого тестирования и отката.
+"@
+        & $gh release view $tag -R $GitHubRepo *> $null
+        if ($LASTEXITCODE -eq 0) {
+            & $gh release upload $tag $zip -R $GitHubRepo --clobber | Out-Null
+        } else {
+            & $gh release create $tag $zip -R $GitHubRepo --title "SeriesToolkit $version" --notes $body | Out-Null
+        }
+    }
+} catch { }
 
 # Обновляем gist: если edit не получится, создаём новый.
 try {

@@ -113,7 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 - Версия в `version.json`.
 - **Инкремент версии и снимок в `OLD/`** выполняются **только когда изменился файл `SeriesToolkit.ps1`** (хэш сравнивается с локальным `.launcher-content.sha256`, файл в `.gitignore`).
 - После успешного bump по желанию пересобирается **EXE** (если установлен модуль `ps2exe`).
-- `Sync-GitHub.ps1` публикует копию без секретов в репозиторий **emildg8/SeriesToolkit**.
+- `Sync-GitHub.ps1` публикует копию без секретов в репозиторий **emildg8/SeriesToolkit** и автоматически делает/обновляет GitHub Release `vX.Y.Z` с ZIP-архивом.
 
 Легаси-имя **Script_Rename_ALLVideo** встречается только в старых скриптах родительского набора; публичное имя проекта — **SeriesToolkit**.
 
