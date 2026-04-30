@@ -129,5 +129,5 @@ try {
         if (Test-Path -LiteralPath $ep) { $gistArgs += $ep }
     }
     & $gh gist create @gistArgs `
-        --desc "SeriesToolkit (ex-RenameVideo toolkit) v$version — см. репозиторий github.com/emildg8/SeriesToolkit" | Out-Null
+        --desc "SeriesToolkit v$version — см. репозиторий github.com/emildg8/SeriesToolkit" | Out-Null
 } catch { }

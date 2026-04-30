@@ -8,15 +8,6 @@
 - EXE-сборка: добавлена иконка приложения (`assets/SeriesToolkit.icon.ico`) и авто-ротация `SeriesToolkit.GUI.exe -> .bak`.
 - Публикация: `Sync-GitHub.ps1` теперь автоматически создаёт/обновляет GitHub Release `vX.Y.Z` и прикрепляет ZIP-архив версии.
 - Документация: в `README.md` и `docs/SCREENSHOTS-RU.md` обновлены реальные скриншоты GUI (`docs/images/01-gui-main.png`, `docs/images/02-dryrun-summary.png`).
-
-
-
-
-
-
-
-
-
 ## 0.1.2 - 2026-04-30 04:55:11 +03:00
 - **`SeriesToolkit.settings.README.md`** и **README**: явно указано, что заголовок **`Cookie`** можно копировать с запросов к **`api.plus.kinopoisk.ru/graphql`** (тот же сеанс, что и у `www.kinopoisk.ru`).
 - Раздел **безопасности**: cookie = доступ к аккаунту; не публиковать; при утечке — смена пароля / завершение сеансов; периодическое обновление строки.
