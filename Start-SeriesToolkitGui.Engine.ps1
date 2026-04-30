@@ -160,7 +160,7 @@ $lblRoot = New-Object Windows.Forms.Label
 $lblRoot.Left = 20; $lblRoot.Top = 92; $lblRoot.Width = 180
 $tbRoot = New-Object Windows.Forms.TextBox
 $tbRoot.Left = 20; $tbRoot.Top = 112; $tbRoot.Width = 780
-$tbRoot.Text = '\\Emilian_TNAS\emildg8\Video\Мультсериалы'
+$tbRoot.Text = '\\MEDIA-SERVER\Video\Cartoons'
 $btnRoot = New-Object Windows.Forms.Button
 $btnRoot.Left = 810; $btnRoot.Top = 110; $btnRoot.Width = 90
 
