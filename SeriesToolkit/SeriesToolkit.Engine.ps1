@@ -3,9 +3,9 @@
 param(
     [ValidateSet('Batch', 'Manual')]
     [string]$Mode = 'Batch',
-    [string]$RootPath = '\\Emilian_TNAS\emildg8\Video\Мультсериалы',
+    [string]$RootPath = '\\MEDIA-SERVER\Video\Cartoons',
     [string]$SeriesPath = '',
-    [string]$ReferenceRootPath = '\\Emilian_TNAS\emildg8\Video\Сериалы',
+    [string]$ReferenceRootPath = '\\MEDIA-SERVER\Video\Series',
     [string]$HtmlPath = '',
     [string]$LogDirectory = '',
     [switch]$Apply,

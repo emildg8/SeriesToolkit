@@ -41,10 +41,33 @@ function Invoke-GhOrThrow {
     }
 }
 
-$items = @(Get-ChildItem -LiteralPath $ProjectRoot -Force -ErrorAction SilentlyContinue)
-foreach ($it in $items) {
-    if ($it.Name -in @('LOGS', 'OLD')) { continue }
-    Copy-Item -LiteralPath $it.FullName -Destination $PublishRepoPath -Recurse -Force
+$allowedFiles = @(
+    'Build-SeriesToolkitExe.ps1',
+    'Bump-Version.ps1',
+    'CHANGELOG.md',
+    'README.md',
+    'SeriesToolkit.Engine.ps1',
+    'SeriesToolkit.ps1',
+    'SeriesToolkit.settings.example.json',
+    'SeriesToolkit.settings.README.md',
+    'Start-SeriesToolkitGui.Engine.ps1',
+    'Start-SeriesToolkitGui.ps1',
+    'Sync-GitHub.ps1',
+    'UiStrings.ps1',
+    'version.json'
+)
+$allowedDirs = @('assets', 'docs')
+foreach ($name in $allowedFiles) {
+    $src = Join-Path $ProjectRoot $name
+    if (Test-Path -LiteralPath $src) {
+        Copy-Item -LiteralPath $src -Destination (Join-Path $PublishRepoPath $name) -Force
+    }
+}
+foreach ($dirName in $allowedDirs) {
+    $srcDir = Join-Path $ProjectRoot $dirName
+    if (Test-Path -LiteralPath $srcDir) {
+        Copy-Item -LiteralPath $srcDir -Destination (Join-Path $PublishRepoPath $dirName) -Recurse -Force
+    }
 }
 # Секреты только локально — никогда не публиковать на GitHub
 foreach ($secret in @('SeriesToolkit.settings.json', '.env', 'secrets.json', 'tmdb.key', 'kinopoisk.cookie.txt')) {
@@ -60,6 +83,18 @@ if (Test-Path -LiteralPath (Join-Path $PublishRepoPath 'LOGS')) {
 }
 if (Test-Path -LiteralPath (Join-Path $PublishRepoPath 'OLD')) {
     Remove-Item -LiteralPath (Join-Path $PublishRepoPath 'OLD') -Recurse -Force
+}
+foreach ($extra in @(
+    'CartoonSeriesToolkit.ps1',
+    'Start-CartoonSeriesToolkitGui.ps1',
+    'Publish-GitHubReleases.ps1',
+    '_make-icon.ps1',
+    'SeriesToolkit.GUI.exe.bak',
+    'SeriesToolkit.GUI.new.exe',
+    'SeriesToolkit.GUI.new.exe.bak'
+)) {
+    $p = Join-Path $PublishRepoPath $extra
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
 }
 
 $version = 'unknown'
