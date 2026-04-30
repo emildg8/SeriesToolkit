@@ -112,7 +112,12 @@ foreach ($name in $allowedFiles) {
 foreach ($dirName in $allowedDirs) {
     $srcDir = Join-Path $ProjectRoot $dirName
     if (Test-Path -LiteralPath $srcDir) {
-        Copy-Item -LiteralPath $srcDir -Destination (Join-Path $PublishRepoPath $dirName) -Recurse -Force
+        $dstDir = Join-Path $PublishRepoPath $dirName
+        if (Test-Path -LiteralPath $dstDir) {
+            Remove-Item -LiteralPath $dstDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $srcDir '*') -Destination $dstDir -Recurse -Force
     }
 }
 # Секреты только локально — никогда не публиковать на GitHub

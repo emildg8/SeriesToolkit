@@ -1,5 +1,10 @@
 ﻿# CHANGELOG
 
+## 0.1.23 - 2026-04-30 16:41:00 +03:00
+- GitHub publish: исправлен перенос директорий `docs/assets` в `Sync-GitHub.ps1` (устранено вложение `docs/docs/...`).
+- Документация: восстановлено корректное отображение GUI-скриншота по пути `docs/images/01-gui-main-v2.png` в README.
+- Публикация: выпущен повторный релиз с правильной структурой документации.
+
 ## 0.1.22 - 2026-04-30 16:38:00 +03:00
 - GitHub docs: исправлено отображение GUI-скриншота в README (актуальный файл `docs/images/01-gui-main-v2.png` синхронизирован в публикацию).
 - Диагностика: добавлены source-reason строки `meta-diagnostic` и live-лог `[SeriesToolkit][Diag] ...` с состояниями источников (`ok/no-match/error/captcha/disabled`).
