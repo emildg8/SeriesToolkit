@@ -22,6 +22,11 @@ if (-not (Test-Path -LiteralPath $PublishRepoPath)) {
 }
 
 Copy-Item -Path (Join-Path $ProjectRoot '*') -Destination $PublishRepoPath -Recurse -Force
+# Секреты только локально — никогда не публиковать на GitHub
+foreach ($secret in @('SeriesToolkit.settings.json', '.env', 'secrets.json', 'tmdb.key', 'kinopoisk.cookie.txt')) {
+    $sp = Join-Path $PublishRepoPath $secret
+    if (Test-Path -LiteralPath $sp) { Remove-Item -LiteralPath $sp -Force }
+}
 $parentFetch = Join-Path (Split-Path -Parent $ProjectRoot) 'Fetch-VideoMetadata.ps1'
 if (Test-Path -LiteralPath $parentFetch) {
     Copy-Item -LiteralPath $parentFetch -Destination (Join-Path $PublishRepoPath 'Fetch-VideoMetadata.ps1') -Force
@@ -63,17 +68,23 @@ if (-not [string]::IsNullOrWhiteSpace($changes)) {
 
 # Обновляем gist: если edit не получится, создаём новый.
 try {
-    & $gh gist create `
-        (Join-Path $ProjectRoot 'README.md') `
-        (Join-Path $ProjectRoot 'CHANGELOG.md') `
-        (Join-Path $ProjectRoot 'version.json') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.ps1') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.Engine.ps1') `
-        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1') `
-        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1') `
-        (Join-Path $ProjectRoot 'UiStrings.ps1') `
-        (Join-Path $ProjectRoot 'Bump-Version.ps1') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md') `
-        --desc "SeriesToolkit auto-sync v$version" | Out-Null
+    $gistArgs = @(
+        (Join-Path $ProjectRoot 'README.md'),
+        (Join-Path $ProjectRoot 'CHANGELOG.md'),
+        (Join-Path $ProjectRoot 'version.json'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.ps1'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.Engine.ps1'),
+        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1'),
+        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1'),
+        (Join-Path $ProjectRoot 'UiStrings.ps1'),
+        (Join-Path $ProjectRoot 'Bump-Version.ps1'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md')
+    )
+    foreach ($extra in @('docs/gui-mockup.png', 'docs/SCREENSHOTS-RU.md')) {
+        $ep = Join-Path $ProjectRoot $extra
+        if (Test-Path -LiteralPath $ep) { $gistArgs += $ep }
+    }
+    & $gh gist create @gistArgs `
+        --desc "SeriesToolkit (ex-RenameVideo toolkit) v$version — см. репозиторий github.com/emildg8/SeriesToolkit" | Out-Null
 } catch { }

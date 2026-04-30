@@ -13,11 +13,16 @@ param(
     [switch]$UseTmdb,
     [string]$TmdbApiKey = '',
     [switch]$SkipAutoVersion,
-    [switch]$SkipAutoSync
+    [switch]$SkipAutoSync,
+    [switch]$SkipAutoBuildExe
 )
 
 try {
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
+} catch { }
+try {
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 } catch { }
 
 $legacyScript = Join-Path $PSScriptRoot 'SeriesToolkit.Engine.ps1'
@@ -33,7 +38,9 @@ if (-not $SkipAutoVersion) {
     $bump = Join-Path $PSScriptRoot 'Bump-Version.ps1'
     if (Test-Path -LiteralPath $bump) {
         try {
-            & $bump -ProjectRoot $PSScriptRoot -ChangeNote "Автоинкремент версии при запуске SeriesToolkit ($Mode)."
+            $bumpArgs = @{ ProjectRoot = $PSScriptRoot; ChangeNote = "Автоинкремент версии при изменении SeriesToolkit.ps1 ($Mode)." }
+            if ($SkipAutoBuildExe) { $bumpArgs['SkipAutoBuildExe'] = $true }
+            & $bump @bumpArgs
         } catch { }
     }
 }
@@ -43,6 +50,7 @@ foreach ($k in $PSBoundParameters.Keys) { $runArgs[$k] = $PSBoundParameters[$k] 
 $runArgs['LogDirectory'] = $LogDirectory
 $null = $runArgs.Remove('SkipAutoVersion')
 $null = $runArgs.Remove('SkipAutoSync')
+$null = $runArgs.Remove('SkipAutoBuildExe')
 & $legacyScript @runArgs
 
 $syncScript = Join-Path $PSScriptRoot 'Sync-GitHub.ps1'

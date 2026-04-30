@@ -2,5 +2,9 @@
   "tmdb_api_key": "",
   "kinopoisk_cookie": "",
   "episode_filename_format": "{Series} - {Code} - {Title}",
-  "season_folder_format": "Сезон {Season}"
+  "season_folder_format": "Сезон {Season}",
+  "aggressive_second_pass_kinopoisk_min_score": 85,
+  "placeholder_repair_allow_latin_titles": false,
+  "create_missing_season_folders": true,
+  "write_episode_index_csv": true
 }

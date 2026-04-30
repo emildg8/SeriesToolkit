@@ -1,5 +1,5 @@
 ﻿#requires -Version 5.1
-# Dot-source from Script_Rename_ALLVideo_*.ps1. Returns list of @{ season; episode; title } or $null.
+# Dot-source from SeriesToolkit (SeriesToolkit.Engine.ps1) или legacy Script_Rename_ALLVideo_*.ps1. Возвращает список @{ season; episode; title } или $null.
 
 $script:FetchUserAgent = 'RenameSeriesToolkit/1.0 (Windows; PowerShell)'
 $script:LastResolveHint = ''
@@ -1389,6 +1389,45 @@ function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [
         Start-Sleep -Milliseconds (320 + (Get-Random -Maximum 280))
     }
     return $null
+}
+
+function Get-EpisodesFromWikipediaAggressiveDdgMerge([string]$SearchQuery) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
+    $base = ($SearchQuery.Trim() -replace '\s*\([^)]*\)\s*$', '').Trim()
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = $SearchQuery.Trim() }
+    $tail = $null
+    $parts = $base -split '\s*[-\u2013\u2014]\s*'
+    if ($parts.Count -ge 2) {
+        $tail = $parts[-1].Trim()
+        if ($tail.Length -lt 2) { $tail = $null }
+    }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery список эпизодов")
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery телесериал эпизоды")
+    [void]$queries.Add("site:ru.wikipedia.org $base список серий мультсериал")
+    [void]$queries.Add("site:ru.wikipedia.org $base эпизоды сериал")
+    [void]$queries.Add("site:ru.wikipedia.org $base мультсериал серии")
+    if ($tail) {
+        [void]$queries.Add("site:ru.wikipedia.org $tail список эпизодов мультсериал")
+        [void]$queries.Add("site:ru.wikipedia.org $tail телесериал все серии")
+        [void]$queries.Add("site:ru.wikipedia.org сезон 1 $tail эпизоды")
+    }
+    $allRows = [System.Collections.Generic.List[object]]::new()
+    $seenUrls = @{}
+    foreach ($dq in ($queries | Select-Object -Unique)) {
+        foreach ($pageUrl in (Search-DuckDuckGoHtmlForWikipediaUrls $dq 24)) {
+            if ($seenUrls.ContainsKey($pageUrl)) { continue }
+            $seenUrls[$pageUrl] = $true
+            $t = Get-WikipediaPageTitleFromUrl $pageUrl
+            if ([string]::IsNullOrWhiteSpace($t)) { continue }
+            $r = Get-EpisodesFromWikipediaPageTitleOrLinked $t
+            if (-not $r) { continue }
+            foreach ($x in @($r)) { [void]$allRows.Add($x) }
+        }
+        Start-Sleep -Milliseconds (300 + (Get-Random -Maximum 250))
+    }
+    if ($allRows.Count -eq 0) { return $null }
+    return @(Convert-EpisodeListToUniqueBySeasonEpisode @($allRows))
 }
 
 function Get-EpisodesFromWikipediaSearchQueries([string]$SearchQuery) {
