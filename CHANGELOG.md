@@ -1,5 +1,21 @@
 ﻿# CHANGELOG
 
+## 0.1.12 - 2026-04-30 15:27:00 +03:00
+- Профили источников приведены к целевой матрице:  
+  `Fast` = TMDB-only (или Wiki-only без API),  
+  `Balanced` = TMDB+Wiki+КП (или Wiki+КП без API),  
+  `Full` = TMDB+Wiki+КП+DDG+Yandex+Google (или без TMDB).
+- Метаданные: в движок добавлен `AggressiveWeb`-этап и интеграция DDG/Yandex/Google для `Full`.
+- Качество кэша: ключ кэша метаданных теперь учитывает профиль и доступность TMDB, чтобы быстрый профиль не ухудшал результаты `Balanced/Full`.
+- Документация: обновлены `README.md` и `SeriesToolkit.settings.README.md` с явной матрицей источников и примером запуска `-ExecutionProfile`.
+
+## 0.1.11 - 2026-04-30 14:52:00 +03:00
+- Производительность: добавлены профили исполнения `Fast` / `Balanced` / `Full` с передачей параметра от GUI до движка.
+- Метаданные: добавлен файловый кэш (`LOGS/series-meta-cache.json`) с TTL/force-refresh и ранний выход из второго прохода в `Balanced` по порогу покрытия.
+- Наблюдаемость: добавлены тайминги этапов по сериям и итоговая сводка `SlowSeriesTop` в TXT-отчёт.
+- Настройки: расширен `SeriesToolkit.settings.example.json` и документация `SeriesToolkit.settings.README.md` новыми полями профиля, кэша и таймингов.
+- Диагностика/эксперименты: добавлен `Run-ProfileBenchmark.ps1` для A/B/C сравнения `Fast/Balanced/Full` на одной библиотеке.
+
 ## 0.1.10 - 2026-04-30 12:42:00 +03:00
 - Приватность: дефолтные пути в launcher/engine/GUI заменены на нейтральные (`\\MEDIA-SERVER\Video\Cartoons`, `\\MEDIA-SERVER\Video\Series`).
 - Публикация: `Sync-GitHub.ps1` переведён на строгий allowlist файлов релиза, чтобы в ZIP не попадали legacy-скрипты и временные артефакты (`*.bak`, `*.new.exe`, `_make-icon.ps1`, старые GUI-скрипты).

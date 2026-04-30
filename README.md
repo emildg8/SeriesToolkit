@@ -66,6 +66,20 @@ SeriesToolkit как раз это делает и пишет подробный
 - **Batch** — вся библиотека по `RootPath`.
 - **Manual** — один сериал + опционально локальный HTML со списком серий.
 
+## Профили источников метаданных
+
+- `Fast`:
+  - при наличии TMDB API: **только TMDB**;
+  - без TMDB API: **только Wikipedia**.
+- `Balanced`:
+  - при наличии TMDB API: **TMDB + Wikipedia + Кинопоиск**;
+  - без TMDB API: **Wikipedia + Кинопоиск**.
+- `Full`:
+  - при наличии TMDB API: **TMDB + Wikipedia + Кинопоиск + DDG + Yandex + Google**;
+  - без TMDB API: **Wikipedia + Кинопоиск + DDG + Yandex + Google**.
+
+Важно: кэш метаданных теперь разделён по профилю и состоянию TMDB API, чтобы `Fast` не «загрязнял» результаты `Balanced/Full`.
+
 ## Запуск из PowerShell
 
 **Пробный прогон (ничего не меняет на диске):**
@@ -78,6 +92,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Ba
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -Apply -UseTmdb
+
+# пример выбора профиля
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -DryRun -ExecutionProfile Full
 ```
 
 ## GUI

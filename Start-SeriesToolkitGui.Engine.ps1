@@ -184,6 +184,16 @@ $cbDry = New-Object Windows.Forms.CheckBox
 $cbDry.Left = 260; $cbDry.Top = 256; $cbDry.Width = 280
 $cbDry.Checked = $true
 
+$lblProfile = New-Object Windows.Forms.Label
+$lblProfile.Left = 560; $lblProfile.Top = 258; $lblProfile.Width = 120
+$lblProfile.Text = 'Профиль'
+
+$cbProfile = New-Object Windows.Forms.ComboBox
+$cbProfile.Left = 640; $cbProfile.Top = 254; $cbProfile.Width = 260
+$cbProfile.DropDownStyle = 'DropDownList'
+[void]$cbProfile.Items.AddRange(@('Balanced', 'Fast', 'Full'))
+$cbProfile.SelectedIndex = 0
+
 $btnRun = New-Object Windows.Forms.Button
 $btnRun.Left = 730; $btnRun.Top = 332; $btnRun.Width = 170; $btnRun.Height = 34
 $btnRun.FlatStyle = 'Flat'
@@ -236,6 +246,7 @@ function Refresh-Texts {
     $lblHtml.Text = $script:s.HtmlPath
     $cbTmdb.Text = $script:s.UseTmdb
     $cbDry.Text = $script:s.DryRun
+    $lblProfile.Text = if ($script:lang -eq 'en') { 'Profile' } else { 'Профиль' }
     $btnRun.Text = $script:s.Start
     $btnRoot.Text = $script:s.Browse
     $btnSeries.Text = $script:s.Browse
@@ -456,6 +467,9 @@ $btnRun.Add_Click({
             Add-Args $argList @('-HtmlPath', $tbHtml.Text.Trim())
         }
         if ($cbTmdb.Checked) { [void]$argList.Add('-UseTmdb') }
+        if ($cbProfile.SelectedItem) {
+            Add-Args $argList @('-ExecutionProfile', [string]$cbProfile.SelectedItem)
+        }
         if ($cbDry.Checked) { [void]$argList.Add('-DryRun') } else { [void]$argList.Add('-Apply') }
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $psExe
@@ -485,7 +499,7 @@ $btnRun.Add_Click({
     }
 })
 
-$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblTime, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $pbOverall, $tbLog))
+$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblTime, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $pbOverall, $tbLog))
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 120
 $timer.Add_Tick({

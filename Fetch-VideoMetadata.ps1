@@ -22,9 +22,18 @@ function Initialize-WebClient {
     } catch { }
 }
 
+function Get-SeriesToolkitMetadataTimeoutSec([int]$Default = 60) {
+    $raw = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_METADATA_TIMEOUT_SEC', 'Process')
+    $v = 0
+    if ([int]::TryParse($raw, [ref]$v) -and $v -ge 10 -and $v -le 300) {
+        return $v
+    }
+    return $Default
+}
+
 function Get-UrlText([string]$Uri) {
     Initialize-WebClient
-    $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 60
+    $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 60)
     return $r.Content
 }
 
@@ -1364,6 +1373,58 @@ function Search-DuckDuckGoHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max =
     return @(@($found) | Select-Object -First $Max)
 }
 
+function Search-YandexHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return @() }
+    Initialize-WebClient
+    $enc = [uri]::EscapeDataString($SearchQuery.Trim())
+    $uri = "https://yandex.ru/search/?text=$enc"
+    try {
+        $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -Headers @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept-Language' = 'ru-RU,ru;q=0.9'
+        } -TimeoutSec 55
+    } catch { return @() }
+    if (-not $r -or [string]::IsNullOrWhiteSpace($r.Content)) { return @() }
+    $html = $r.Content
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in [regex]::Matches($html, 'https?://ru\.wikipedia\.org/wiki/[^\s"''<>]+')) {
+        [void]$found.Add((($m.Value -split '\?')[0]))
+    }
+    foreach ($m in [regex]::Matches($html, 'https?%3A%2F%2Fru\.wikipedia\.org%2Fwiki%2F[^"&<>]+')) {
+        try {
+            $decoded = [uri]::UnescapeDataString($m.Value)
+            [void]$found.Add((($decoded -split '\?')[0]))
+        } catch { }
+    }
+    return @(@($found) | Select-Object -First $Max)
+}
+
+function Search-GoogleHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return @() }
+    Initialize-WebClient
+    $enc = [uri]::EscapeDataString($SearchQuery.Trim())
+    $uri = "https://www.google.com/search?q=$enc&hl=ru"
+    try {
+        $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -Headers @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept-Language' = 'ru-RU,ru;q=0.9'
+        } -TimeoutSec 55
+    } catch { return @() }
+    if (-not $r -or [string]::IsNullOrWhiteSpace($r.Content)) { return @() }
+    $html = $r.Content
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in [regex]::Matches($html, '/url\?q=(https?://ru\.wikipedia\.org/wiki/[^&"''<>]+)')) {
+        try {
+            $decoded = [uri]::UnescapeDataString($m.Groups[1].Value)
+            [void]$found.Add((($decoded -split '\?')[0]))
+        } catch { }
+    }
+    foreach ($m in [regex]::Matches($html, 'https?://ru\.wikipedia\.org/wiki/[^\s"''<>]+')) {
+        [void]$found.Add((($m.Value -split '\?')[0]))
+    }
+    return @(@($found) | Select-Object -First $Max)
+}
+
 function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [string]$Base, [string]$Tail) {
     if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
     $queries = [System.Collections.Generic.List[string]]::new()
@@ -1425,6 +1486,50 @@ function Get-EpisodesFromWikipediaAggressiveDdgMerge([string]$SearchQuery) {
             foreach ($x in @($r)) { [void]$allRows.Add($x) }
         }
         Start-Sleep -Milliseconds (300 + (Get-Random -Maximum 250))
+    }
+    if ($allRows.Count -eq 0) { return $null }
+    return @(Convert-EpisodeListToUniqueBySeasonEpisode @($allRows))
+}
+
+function Get-EpisodesFromWikipediaAggressiveWebMerge([string]$SearchQuery) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
+    $base = ($SearchQuery.Trim() -replace '\s*\([^)]*\)\s*$', '').Trim()
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = $SearchQuery.Trim() }
+    $tail = $null
+    $parts = $base -split '\s*[-\u2013\u2014]\s*'
+    if ($parts.Count -ge 2) {
+        $tail = $parts[-1].Trim()
+        if ($tail.Length -lt 2) { $tail = $null }
+    }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery список эпизодов")
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery телесериал эпизоды")
+    [void]$queries.Add("site:ru.wikipedia.org $base список серий мультсериал")
+    if ($tail) {
+        [void]$queries.Add("site:ru.wikipedia.org $tail список эпизодов мультсериал")
+        [void]$queries.Add("site:ru.wikipedia.org $tail телесериал все серии")
+    }
+
+    $allRows = [System.Collections.Generic.List[object]]::new()
+    $seenUrls = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($q in ($queries | Select-Object -Unique)) {
+        $urlBuckets = @(
+            @(Search-DuckDuckGoHtmlForWikipediaUrls $q 24),
+            @(Search-YandexHtmlForWikipediaUrls $q 24),
+            @(Search-GoogleHtmlForWikipediaUrls $q 24)
+        )
+        foreach ($bucket in $urlBuckets) {
+            foreach ($pageUrl in @($bucket)) {
+                if ([string]::IsNullOrWhiteSpace($pageUrl)) { continue }
+                if (-not $seenUrls.Add($pageUrl)) { continue }
+                $t = Get-WikipediaPageTitleFromUrl $pageUrl
+                if ([string]::IsNullOrWhiteSpace($t)) { continue }
+                $r = Get-EpisodesFromWikipediaPageTitleOrLinked $t
+                if (-not $r) { continue }
+                foreach ($x in @($r)) { [void]$allRows.Add($x) }
+            }
+            Start-Sleep -Milliseconds (220 + (Get-Random -Maximum 200))
+        }
     }
     if ($allRows.Count -eq 0) { return $null }
     return @(Convert-EpisodeListToUniqueBySeasonEpisode @($allRows))

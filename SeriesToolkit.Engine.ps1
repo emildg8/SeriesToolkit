@@ -11,7 +11,9 @@ param(
     [switch]$Apply,
     [switch]$DryRun,
     [switch]$UseTmdb,
-    [string]$TmdbApiKey = ''
+    [string]$TmdbApiKey = '',
+    [ValidateSet('Fast', 'Balanced', 'Full')]
+    [string]$ExecutionProfile = 'Balanced'
 )
 
 try {
@@ -60,6 +62,13 @@ $script:UserSettings = @{
     episode_filename_format = '{Series} - {Code} - {Title}'
     season_folder_format = 'Сезон {Season}'
     aggressive_second_pass_kinopoisk_min_score = 85
+    execution_profile = 'Balanced'
+    metadata_second_pass_min_coverage_percent = 70
+    metadata_cache_ttl_hours = 168
+    metadata_cache_force_refresh = $false
+    metadata_request_timeout_sec = 60
+    metadata_enable_stage_timing = $true
+    metadata_slow_series_top_n = 10
     placeholder_repair_allow_latin_titles = $false
     create_missing_season_folders = $true
     write_episode_index_csv = $true
@@ -92,6 +101,30 @@ function Import-SeriesToolkitUserSettings {
         if ($key -contains 'aggressive_second_pass_kinopoisk_min_score' -and $null -ne $j.aggressive_second_pass_kinopoisk_min_score) {
             $script:UserSettings.aggressive_second_pass_kinopoisk_min_score = [int]$j.aggressive_second_pass_kinopoisk_min_score
         }
+        if ($key -contains 'execution_profile' -and $j.execution_profile) {
+            $ep = [string]$j.execution_profile
+            if ($ep -in @('Fast', 'Balanced', 'Full')) {
+                $script:UserSettings.execution_profile = $ep
+            }
+        }
+        if ($key -contains 'metadata_second_pass_min_coverage_percent' -and $null -ne $j.metadata_second_pass_min_coverage_percent) {
+            $script:UserSettings.metadata_second_pass_min_coverage_percent = [int]$j.metadata_second_pass_min_coverage_percent
+        }
+        if ($key -contains 'metadata_cache_ttl_hours' -and $null -ne $j.metadata_cache_ttl_hours) {
+            $script:UserSettings.metadata_cache_ttl_hours = [int]$j.metadata_cache_ttl_hours
+        }
+        if ($key -contains 'metadata_cache_force_refresh' -and $null -ne $j.metadata_cache_force_refresh) {
+            $script:UserSettings.metadata_cache_force_refresh = [bool]$j.metadata_cache_force_refresh
+        }
+        if ($key -contains 'metadata_request_timeout_sec' -and $null -ne $j.metadata_request_timeout_sec) {
+            $script:UserSettings.metadata_request_timeout_sec = [int]$j.metadata_request_timeout_sec
+        }
+        if ($key -contains 'metadata_enable_stage_timing' -and $null -ne $j.metadata_enable_stage_timing) {
+            $script:UserSettings.metadata_enable_stage_timing = [bool]$j.metadata_enable_stage_timing
+        }
+        if ($key -contains 'metadata_slow_series_top_n' -and $null -ne $j.metadata_slow_series_top_n) {
+            $script:UserSettings.metadata_slow_series_top_n = [int]$j.metadata_slow_series_top_n
+        }
         if ($key -contains 'placeholder_repair_allow_latin_titles' -and $null -ne $j.placeholder_repair_allow_latin_titles) {
             $script:UserSettings.placeholder_repair_allow_latin_titles = [bool]$j.placeholder_repair_allow_latin_titles
         }
@@ -105,6 +138,12 @@ function Import-SeriesToolkitUserSettings {
 }
 
 Import-SeriesToolkitUserSettings
+if ($ExecutionProfile -in @('Fast', 'Balanced', 'Full')) {
+    $script:UserSettings.execution_profile = $ExecutionProfile
+}
+try {
+    [Environment]::SetEnvironmentVariable('SERIESTOOLKIT_METADATA_TIMEOUT_SEC', ([string][int]$script:UserSettings.metadata_request_timeout_sec), 'Process')
+} catch { }
 
 $script:ToolkitVersion = '0.0.0'
 try {
@@ -118,6 +157,9 @@ try {
 $script:Records = [System.Collections.Generic.List[object]]::new()
 $script:TmdbEpisodeCache = @{}
 $script:SeriesTitlesCache = @{}
+$script:SeriesMetaCache = @{}
+$script:SeriesMetaCachePath = Join-Path $PSScriptRoot 'LOGS\series-meta-cache.json'
+$script:SeriesStageDurations = [System.Collections.Generic.List[object]]::new()
 $script:ProgressLogPath = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_PROGRESS_LOG', 'Process')
 $script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
 $script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
@@ -131,6 +173,72 @@ function Write-ToolkitProgress([string]$Line) {
             Add-Content -LiteralPath $script:ProgressLogPath -Value $Line -Encoding UTF8
         } catch { }
     }
+}
+
+function Get-ExecutionProfileResolved {
+    $p = [string]$script:UserSettings.execution_profile
+    if ($p -notin @('Fast', 'Balanced', 'Full')) { return 'Balanced' }
+    return $p
+}
+
+function Get-SeriesMetaCacheKey([string]$SeriesName) {
+    if ([string]::IsNullOrWhiteSpace($SeriesName)) { return '' }
+    $norm = Normalize-ForTmdbSearch $SeriesName
+    $profile = Get-ExecutionProfileResolved
+    $tmdbFlag = if ($script:TmdbEnabled) { 'tmdb1' } else { 'tmdb0' }
+    return ("{0}|{1}|{2}" -f $profile, $tmdbFlag, $norm)
+}
+
+function Import-SeriesMetaCache {
+    if (-not (Test-Path -LiteralPath $script:SeriesMetaCachePath)) { return }
+    try {
+        $obj = Get-Content -LiteralPath $script:SeriesMetaCachePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in $obj.PSObject.Properties) { $script:SeriesMetaCache[$p.Name] = $p.Value }
+    } catch { }
+}
+
+function Save-SeriesMetaCache {
+    try {
+        $dir = Split-Path -Parent $script:SeriesMetaCachePath
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        ($script:SeriesMetaCache | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $script:SeriesMetaCachePath -Encoding UTF8
+    } catch { }
+}
+
+function Get-SeriesMetaFromCache([string]$SeriesName) {
+    if ($script:UserSettings.metadata_cache_force_refresh) { return $null }
+    $k = Get-SeriesMetaCacheKey $SeriesName
+    if ([string]::IsNullOrWhiteSpace($k)) { return $null }
+    if (-not $script:SeriesMetaCache.ContainsKey($k)) { return $null }
+    $entry = $script:SeriesMetaCache[$k]
+    if ($null -eq $entry) { return $null }
+    try {
+        $ttl = [int]$script:UserSettings.metadata_cache_ttl_hours
+        if ($ttl -le 0) { $ttl = 168 }
+        $at = [datetime]$entry.updatedAt
+        if ($at -lt (Get-Date).AddHours(-1 * $ttl)) { return $null }
+        return @($entry.episodes)
+    } catch { return $null }
+}
+
+function Set-SeriesMetaToCache([string]$SeriesName, [object[]]$Episodes) {
+    $k = Get-SeriesMetaCacheKey $SeriesName
+    if ([string]::IsNullOrWhiteSpace($k)) { return }
+    $script:SeriesMetaCache[$k] = [PSCustomObject]@{
+        updatedAt = (Get-Date).ToString('o')
+        episodes  = @($Episodes)
+    }
+}
+
+function Write-SeriesStageTiming([string]$SeriesName, [string]$StageName, [datetime]$StartedAt) {
+    if (-not $script:UserSettings.metadata_enable_stage_timing) { return }
+    $ms = [int][Math]::Round(((Get-Date) - $StartedAt).TotalMilliseconds)
+    [void]$script:SeriesStageDurations.Add([PSCustomObject]@{
+            series = $SeriesName
+            stage  = $StageName
+            ms     = $ms
+        })
+    Write-ToolkitProgress ("[SeriesToolkit][Timing] {0} :: {1}={2}ms" -f $SeriesName, $StageName, $ms)
 }
 
 function Write-SeriesProgress([string]$SeriesName, [string]$Stage, [int]$Index, [int]$Total) {
@@ -177,6 +285,8 @@ function Clear-SkipMarker([System.IO.DirectoryInfo]$SeriesDir) {
         Set-Content -LiteralPath $script:SkipSignalFile -Value $left -Encoding UTF8
     } catch { }
 }
+
+Import-SeriesMetaCache
 
 function Add-Record {
     param(
@@ -604,17 +714,22 @@ function Get-CombinedEpisodeMergedObjects {
         [Parameter(Mandatory = $true)]
         [string]$SeriesName,
         [int]$KinopoiskMinScore = 120,
-        [switch]$AggressiveDdg
+        [switch]$AggressiveDdg,
+        [switch]$AggressiveWeb,
+        [switch]$SkipWikipedia,
+        [switch]$SkipKinopoisk
     )
     if ([string]::IsNullOrWhiteSpace($SeriesName)) { return @() }
 
-    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: wikipedia search start" -f $SeriesName)
     $wikiList = $null
-    try {
-        if (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue) {
-            $wikiList = Get-EpisodesFromWikipediaSearchQueries $SeriesName
-        }
-    } catch { }
+    if (-not $SkipWikipedia) {
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: wikipedia search start" -f $SeriesName)
+        try {
+            if (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue) {
+                $wikiList = Get-EpisodesFromWikipediaSearchQueries $SeriesName
+            }
+        } catch { }
+    }
     $wikiArr = @($wikiList)
 
     if ($AggressiveDdg -and (Get-Command Get-EpisodesFromWikipediaAggressiveDdgMerge -ErrorAction SilentlyContinue)) {
@@ -626,6 +741,19 @@ function Get-CombinedEpisodeMergedObjects {
                     $wikiArr = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($wikiArr) + @($ag)))
                 } else {
                     $wikiArr = @($ag)
+                }
+            }
+        } catch { }
+    }
+    if ($AggressiveWeb -and (Get-Command Get-EpisodesFromWikipediaAggressiveWebMerge -ErrorAction SilentlyContinue)) {
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: aggressive WEB merge start (DDG/Yandex/Google)" -f $SeriesName)
+        try {
+            $agw = Get-EpisodesFromWikipediaAggressiveWebMerge $SeriesName
+            if ($agw -and @($agw).Count -gt 0) {
+                if ($wikiArr.Count -gt 0) {
+                    $wikiArr = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($wikiArr) + @($agw)))
+                } else {
+                    $wikiArr = @($agw)
                 }
             }
         } catch { }
@@ -671,14 +799,16 @@ function Get-CombinedEpisodeMergedObjects {
         $merged = $tmdbArr
     }
 
-    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: Kinopoisk verification start" -f $SeriesName)
     $kpArr = $null
-    if (Get-Command Get-EpisodesFromKinopoiskVerifiedForSeries -ErrorAction SilentlyContinue) {
-        try {
-            $ru = if ($pick) { [string]$pick.name } else { $null }
-            $orig = if ($pick) { [string]$pick.original_name } else { $null }
-            $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig -MinMatchScore $KinopoiskMinScore
-        } catch { }
+    if (-not $SkipKinopoisk) {
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: Kinopoisk verification start" -f $SeriesName)
+        if (Get-Command Get-EpisodesFromKinopoiskVerifiedForSeries -ErrorAction SilentlyContinue) {
+            try {
+                $ru = if ($pick) { [string]$pick.name } else { $null }
+                $orig = if ($pick) { [string]$pick.original_name } else { $null }
+                $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig -MinMatchScore $KinopoiskMinScore
+            } catch { }
+        }
     }
     if ($merged -and @($merged).Count -gt 0 -and $kpArr -and @($kpArr).Count -gt 0 -and (Get-Command Merge-EpisodeTitlesPreferRu -ErrorAction SilentlyContinue)) {
         $merged = Merge-EpisodeTitlesPreferRu @($merged) @($kpArr)
@@ -700,9 +830,12 @@ function Get-CombinedEpisodeTitleMap {
         [Parameter(Mandatory = $true)]
         [string]$SeriesName,
         [int]$KinopoiskMinScore = 120,
-        [switch]$AggressiveDdg
+        [switch]$AggressiveDdg,
+        [switch]$AggressiveWeb,
+        [switch]$SkipWikipedia,
+        [switch]$SkipKinopoisk
     )
-    $merged = @(Get-CombinedEpisodeMergedObjects -SeriesName $SeriesName -KinopoiskMinScore $KinopoiskMinScore -AggressiveDdg:$AggressiveDdg)
+    $merged = @(Get-CombinedEpisodeMergedObjects -SeriesName $SeriesName -KinopoiskMinScore $KinopoiskMinScore -AggressiveDdg:$AggressiveDdg -AggressiveWeb:$AggressiveWeb -SkipWikipedia:$SkipWikipedia -SkipKinopoisk:$SkipKinopoisk)
     if ($merged.Count -gt 0) {
         $h = Convert-EpisodeObjectsToHashtable @($merged)
         return (Expand-EpisodeTitleMapWithLatinFallback $h)
@@ -1018,8 +1151,42 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Нормализация папок сезонов' -Index 1 -Total $seriesTotalStages
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
+    $profile = Get-ExecutionProfileResolved
+    Write-ToolkitProgress ("[SeriesToolkit][Profile] {0} :: {1}" -f $SeriesDir.Name, $profile)
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных (Wiki/TMDB/KP)' -Index 2 -Total $seriesTotalStages
-    $mergedFirst = @(Get-CombinedEpisodeMergedObjects -SeriesName $seriesName -KinopoiskMinScore 120)
+    $stageMetaStarted = Get-Date
+    $mergedFirst = @()
+    $cacheUsed = $false
+    $cached = @(Get-SeriesMetaFromCache -SeriesName $seriesName)
+    if ($cached.Count -gt 0) {
+        $mergedFirst = $cached
+        $cacheUsed = $true
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: cache hit episodes={1}" -f $seriesName, $mergedFirst.Count)
+    } else {
+        $metaArgs = @{
+            SeriesName        = $seriesName
+            KinopoiskMinScore = 120
+        }
+        switch ($profile) {
+            'Fast' {
+                if ($script:TmdbEnabled) {
+                    $metaArgs['SkipWikipedia'] = $true
+                    $metaArgs['SkipKinopoisk'] = $true
+                } else {
+                    $metaArgs['SkipKinopoisk'] = $true
+                }
+            }
+            'Balanced' {
+                # TMDB + Wiki + KP (или Wiki + KP без API)
+            }
+            'Full' {
+                $metaArgs['AggressiveWeb'] = $true
+            }
+        }
+        $mergedFirst = @(Get-CombinedEpisodeMergedObjects @metaArgs)
+        if ($mergedFirst.Count -gt 0) { Set-SeriesMetaToCache -SeriesName $seriesName -Episodes $mergedFirst }
+    }
+    Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'meta_first_pass' -StartedAt $stageMetaStarted
     if (Test-ShouldSkipSeries $SeriesDir) {
         Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
         Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
@@ -1033,12 +1200,16 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
         $mapFromNet = Expand-EpisodeTitleMapWithLatinFallback (Convert-EpisodeObjectsToHashtable @($mergedFirst))
     }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Построение плана переименований' -Index 4 -Total $seriesTotalStages
+    $stagePlanStarted = Get-Date
     $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $mapFromNet
     $plan = Build-RenamePlanForSeries -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Resolve-TargetConflicts -Plan $plan
     Ensure-SeasonFolders -Plan $plan -SeriesName $SeriesDir.Name
+    Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'build_plan' -StartedAt $stagePlanStarted
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Применение плана' -Index 5 -Total $seriesTotalStages
+    $stageApplyStarted = Get-Date
     Apply-Plan -Plan $plan
+    Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'apply_plan' -StartedAt $stageApplyStarted
     if (Test-ShouldSkipSeries $SeriesDir) {
         Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
         Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
@@ -1046,8 +1217,10 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
         return
     }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Ремонт заглушек Серия N' -Index 6 -Total $seriesTotalStages
+    $stageRepairStarted = Get-Date
     Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Remove-EmptyDirectories -SeriesDir $SeriesDir
+    Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'repair_pass_1' -StartedAt $stageRepairStarted
 
     if (-not (Test-SeriesDirHasPlaceholderVideoFiles $SeriesDir)) {
         Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
@@ -1055,19 +1228,52 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
         return
     }
 
+    if ($profile -eq 'Fast') {
+        Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
+        Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово (Fast: без 2-го прохода)' -Index 8 -Total $seriesTotalStages
+        return
+    }
+
+    $videoCount = @(
+        Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$' }
+    ).Count
+    $placeholderCount = @(
+        Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-IsPlaceholderEpisodeFileName ([System.IO.Path]::GetFileNameWithoutExtension($_.Name)) }
+    ).Count
+    $coverage = if ($videoCount -gt 0) { [int][Math]::Floor((($videoCount - $placeholderCount) * 100.0) / $videoCount) } else { 100 }
+    $minCoverage = [int]$script:UserSettings.metadata_second_pass_min_coverage_percent
+    if ($minCoverage -lt 0) { $minCoverage = 70 }
+    if ($profile -eq 'Balanced' -and $coverage -ge $minCoverage) {
+        Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: second pass skipped coverage={1}% threshold={2}%" -f $SeriesDir.Name, $coverage, $minCoverage)
+        Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово (без 2-го прохода)' -Index 8 -Total $seriesTotalStages
+        return
+    }
+
+    if ($profile -eq 'Balanced') {
+        Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: balanced profile keeps first-pass sources only (TMDB/Wiki/KP)" -f $SeriesDir.Name)
+        Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово (Balanced: без DDG/Web 2-го прохода)' -Index 8 -Total $seriesTotalStages
+        return
+    }
+
     $kp2 = [int]$script:UserSettings.aggressive_second_pass_kinopoisk_min_score
     if ($kp2 -lt 50) { $kp2 = 85 }
     Add-Record -Series $SeriesDir.Name -Action 'second-pass-aggressive' -Status 'INFO' -Details ('Повторный сбор названий: DDG+ru.wikipedia, Кинопоиск minScore={0}, вторая строка поиска — имя папки.' -f $kp2)
-    $extraA = Get-CombinedEpisodeTitleMap -SeriesName $seriesName -KinopoiskMinScore $kp2 -AggressiveDdg
+    $stageSecondStarted = Get-Date
+    $extraA = Get-CombinedEpisodeTitleMap -SeriesName $seriesName -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
     $rawLeaf = $SeriesDir.Name.Trim()
     $extraB = @{}
     if ($rawLeaf -ne $seriesName) {
-        $extraB = Get-CombinedEpisodeTitleMap -SeriesName $rawLeaf -KinopoiskMinScore $kp2 -AggressiveDdg
+        $extraB = Get-CombinedEpisodeTitleMap -SeriesName $rawLeaf -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
     }
     $extraMerged = Merge-EpisodeTitleMaps -Primary $extraA -Fallback $extraB
     $allTitles2 = Merge-EpisodeTitleMaps -Primary $allTitles -Fallback $extraMerged
     Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles2
     Remove-EmptyDirectories -SeriesDir $SeriesDir
+    Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'repair_pass_2' -StartedAt $stageSecondStarted
     Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово (после 2-го прохода)' -Index 8 -Total $seriesTotalStages
 }
@@ -1106,12 +1312,14 @@ $modeTag = if ($DryRun) { 'dryrun' } else { 'apply' }
 $csvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.csv")
 $txtPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
 $script:Records | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
+Save-SeriesMetaCache
 
 $warn = @($script:Records | Where-Object { $_.status -eq 'WARN' }).Count
 $err = @($script:Records | Where-Object { $_.status -eq 'ERROR' }).Count
 $summary = @(
     "Mode: $Mode",
     "RunMode: $(if ($DryRun) { 'DryRun' } else { 'Apply' })",
+    "ExecutionProfile: $(Get-ExecutionProfileResolved)",
     "RootPath: $RootPath",
     "SeriesPath: $SeriesPath",
     "TotalLogRecords: $($script:Records.Count)",
@@ -1120,6 +1328,30 @@ $summary = @(
     "CSV: $csvPath",
     "TXT: $txtPath"
 ) -join [Environment]::NewLine
+
+if ($script:SeriesStageDurations.Count -gt 0) {
+    $topN = [int]$script:UserSettings.metadata_slow_series_top_n
+    if ($topN -le 0) { $topN = 10 }
+    $slowSeries = @(
+        $script:SeriesStageDurations |
+            Group-Object series |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    series = $_.Name
+                    ms     = [int](($_.Group | Measure-Object -Property ms -Sum).Sum)
+                }
+            } |
+            Sort-Object ms -Descending |
+            Select-Object -First $topN
+    )
+    if ($slowSeries.Count -gt 0) {
+        $slowText = @('SlowSeriesTop:')
+        foreach ($row in $slowSeries) {
+            $slowText += ("- {0}: {1}ms" -f $row.series, $row.ms)
+        }
+        $summary = $summary + [Environment]::NewLine + ($slowText -join [Environment]::NewLine)
+    }
+}
 Set-Content -LiteralPath $txtPath -Value $summary -Encoding UTF8
 Write-ToolkitProgress $summary
 
