@@ -7,6 +7,12 @@
 
 
 
+
+## 0.1.2 - 2026-04-30 04:55:11 +03:00
+- **`SeriesToolkit.settings.README.md`** и **README**: явно указано, что заголовок **`Cookie`** можно копировать с запросов к **`api.plus.kinopoisk.ru/graphql`** (тот же сеанс, что и у `www.kinopoisk.ru`).
+- Раздел **безопасности**: cookie = доступ к аккаунту; не публиковать; при утечке — смена пароля / завершение сеансов; периодическое обновление строки.
+- Автоматически создан snapshot предыдущей версии: OLD/SeriesToolkit_v0.1.1_20260430-045511.
+
 ## 0.1.1 - 2026-04-30 04:53:24 +03:00
 - **`Set-ExecutionPolicy -Scope Process Bypass`** в `Start-SeriesToolkitGui.Engine.ps1`, `SeriesToolkit.Engine.ps1`, `SeriesToolkit.ps1` — устраняет ошибку загрузки `UiStrings.ps1` при политике `Restricted`.
 - **`SeriesToolkit.settings.example.json`** + **`SeriesToolkit.settings.README.md`**: опциональный **`SeriesToolkit.settings.json`** — `tmdb_api_key`, `kinopoisk_cookie`, `episode_filename_format`, `season_folder_format`; секреты в `.gitignore`.

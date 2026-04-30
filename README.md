@@ -67,7 +67,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 2. Подробные пояснения — в **`SeriesToolkit.settings.README.md`**.
 3. Кратко:
    - **`tmdb_api_key`** — ключ TMDB (на время запуска кладётся в переменную процесса).
-   - **`kinopoisk_cookie`** — строка из браузера: **F12 → Сеть → запрос к kinopoisk.ru → Заголовки → `cookie:`** (всё значение одной строкой). То же можно задать через `setx KINOPOISK_COOKIE "..."`.
+   - **`kinopoisk_cookie`** — значение заголовка **`cookie:`** из Chrome **Network** (запрос к `www.kinopoisk.ru` или к **`api.plus.kinopoisk.ru/graphql`** — подходит одно и то же). Одна длинная строка. Альтернатива: `setx KINOPOISK_COOKIE "..."`. Не светите cookie публично — это доступ к аккаунту.
    - **`episode_filename_format`** — плейсхолдеры `{Series}`, `{Code}`, `{Title}`, `{Season}`, `{Episode}`.
    - **`season_folder_format`** — плейсхолдер `{Season}` (осторожно: распознавание старых папок заточено под типичные виды вроде `Сезон 1`).
 
@@ -91,7 +91,7 @@ setx TMDB_API_KEY "ВАШ_КЛЮЧ"
 Скрипт не обходит юридически значимую защиту (капчу нужно пройти в браузере). Для снижения ложных срабатываний:
 
 1. По умолчанию для HTML Кинопоиска используется **`curl.exe`** (Windows 10+), если не задано `SERIESTOOLKIT_KP_USE_CURL=0`.
-2. Cookie: **`SeriesToolkit.settings.json`** → `kinopoisk_cookie`, или `setx KINOPOISK_COOKIE "..."` / `SERIESTOOLKIT_KINOPOISK_COOKIE`. Откуда брать: **Chrome → F12 → Network → любой запрос к kinopoisk.ru → Headers → Request Headers → `cookie:`** (скриншот 2 в вашем запросе — нужна именно эта длинная строка).
+2. Cookie: **`SeriesToolkit.settings.json`** → `kinopoisk_cookie`, или `setx KINOPOISK_COOKIE "..."` / `SERIESTOOLKIT_KINOPOISK_COOKIE`. В DevTools: **Network → любой запрос к kinopoisk.ru или POST к `api.plus.kinopoisk.ru/graphql` → Request Headers → `cookie:`** (копируете только значение после `cookie:`).
 3. Опционально: `setx SERIESTOOLKIT_KP_DELAY_MS 800` — пауза перед запросом (мс).
 4. Если EXE/скрипты лежат нестандартно: `setx SERIESTOOLKIT_ROOT "D:\путь\к\SeriesToolkit"`.
 
