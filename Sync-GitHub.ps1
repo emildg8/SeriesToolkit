@@ -81,7 +81,7 @@ try {
         (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json'),
         (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md')
     )
-    foreach ($extra in @('docs/gui-mockup.png', 'docs/SCREENSHOTS-RU.md')) {
+    foreach ($extra in @('docs/SCREENSHOTS-RU.md')) {
         $ep = Join-Path $ProjectRoot $extra
         if (Test-Path -LiteralPath $ep) { $gistArgs += $ep }
     }
