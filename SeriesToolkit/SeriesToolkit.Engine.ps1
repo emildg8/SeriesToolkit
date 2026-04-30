@@ -17,6 +17,10 @@ param(
 try {
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
 } catch { }
+try {
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch { }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -55,6 +59,10 @@ if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory 
 $script:UserSettings = @{
     episode_filename_format = '{Series} - {Code} - {Title}'
     season_folder_format = 'Сезон {Season}'
+    aggressive_second_pass_kinopoisk_min_score = 85
+    placeholder_repair_allow_latin_titles = $false
+    create_missing_season_folders = $true
+    write_episode_index_csv = $true
 }
 
 function Import-SeriesToolkitUserSettings {
@@ -81,6 +89,18 @@ function Import-SeriesToolkitUserSettings {
         if ($key -contains 'season_folder_format' -and $j.season_folder_format) {
             $script:UserSettings.season_folder_format = [string]$j.season_folder_format
         }
+        if ($key -contains 'aggressive_second_pass_kinopoisk_min_score' -and $null -ne $j.aggressive_second_pass_kinopoisk_min_score) {
+            $script:UserSettings.aggressive_second_pass_kinopoisk_min_score = [int]$j.aggressive_second_pass_kinopoisk_min_score
+        }
+        if ($key -contains 'placeholder_repair_allow_latin_titles' -and $null -ne $j.placeholder_repair_allow_latin_titles) {
+            $script:UserSettings.placeholder_repair_allow_latin_titles = [bool]$j.placeholder_repair_allow_latin_titles
+        }
+        if ($key -contains 'create_missing_season_folders' -and $null -ne $j.create_missing_season_folders) {
+            $script:UserSettings.create_missing_season_folders = [bool]$j.create_missing_season_folders
+        }
+        if ($key -contains 'write_episode_index_csv' -and $null -ne $j.write_episode_index_csv) {
+            $script:UserSettings.write_episode_index_csv = [bool]$j.write_episode_index_csv
+        }
     } catch { }
 }
 
@@ -98,9 +118,65 @@ try {
 $script:Records = [System.Collections.Generic.List[object]]::new()
 $script:TmdbEpisodeCache = @{}
 $script:SeriesTitlesCache = @{}
+$script:ProgressLogPath = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_PROGRESS_LOG', 'Process')
 $script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
 $script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
 if ($UseTmdb) { $script:TmdbEnabled = $true }
+
+function Write-ToolkitProgress([string]$Line) {
+    if ([string]::IsNullOrWhiteSpace($Line)) { return }
+    Write-Host $Line
+    if (-not [string]::IsNullOrWhiteSpace($script:ProgressLogPath)) {
+        try {
+            Add-Content -LiteralPath $script:ProgressLogPath -Value $Line -Encoding UTF8
+        } catch { }
+    }
+}
+
+function Write-SeriesProgress([string]$SeriesName, [string]$Stage, [int]$Index, [int]$Total) {
+    if ($Total -le 0) { $Total = 1 }
+    if ($Index -lt 0) { $Index = 0 }
+    if ($Index -gt $Total) { $Index = $Total }
+    $pct = [int][Math]::Floor(($Index * 100.0) / $Total)
+    Write-ToolkitProgress ("[SeriesToolkit][SeriesProgress {0}% {1}/{2}] {3} :: {4}" -f $pct, $Index, $Total, $SeriesName, $Stage)
+}
+
+$script:SkipSignalFile = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_SKIP_FILE', 'Process')
+
+function Test-ShouldSkipSeries([System.IO.DirectoryInfo]$SeriesDir) {
+    if ([string]::IsNullOrWhiteSpace($script:SkipSignalFile)) { return $false }
+    if (-not (Test-Path -LiteralPath $script:SkipSignalFile)) { return $false }
+    try {
+        $targets = @(Get-Content -LiteralPath $script:SkipSignalFile -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+        if ($targets.Count -eq 0) { return $false }
+        $full = $SeriesDir.FullName.Trim().ToLowerInvariant()
+        $name = $SeriesDir.Name.Trim().ToLowerInvariant()
+        foreach ($t in $targets) {
+            $x = ([string]$t).Trim().ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($x)) { continue }
+            if ($x -eq $full -or $x -eq $name) { return $true }
+        }
+    } catch { }
+    return $false
+}
+
+function Clear-SkipMarker([System.IO.DirectoryInfo]$SeriesDir) {
+    if ([string]::IsNullOrWhiteSpace($script:SkipSignalFile)) { return }
+    if (-not (Test-Path -LiteralPath $script:SkipSignalFile)) { return }
+    try {
+        $full = $SeriesDir.FullName.Trim().ToLowerInvariant()
+        $name = $SeriesDir.Name.Trim().ToLowerInvariant()
+        $left = @()
+        foreach ($ln in @(Get-Content -LiteralPath $script:SkipSignalFile -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+            $x = ([string]$ln).Trim()
+            if ([string]::IsNullOrWhiteSpace($x)) { continue }
+            $lx = $x.ToLowerInvariant()
+            if ($lx -eq $full -or $lx -eq $name) { continue }
+            $left += $x
+        }
+        Set-Content -LiteralPath $script:SkipSignalFile -Value $left -Encoding UTF8
+    } catch { }
+}
 
 function Add-Record {
     param(
@@ -180,6 +256,68 @@ function Resolve-SeasonFromFolderName([string]$FolderName) {
     if ($n -match '^(?i)season[_\s-]*(\d+)$') { return [int]$Matches[1] }
     if ($n -match '(?i)(?:^|[\s._-])s(\d{1,2})(?:[\s._-]|$)') { return [int]$Matches[1] }
     return $null
+}
+
+function Test-SeriesToolkitVideoExtension([string]$Ext) {
+    if ([string]::IsNullOrWhiteSpace($Ext)) { return $false }
+    return [bool]($Ext -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$')
+}
+
+function Test-LooksLikeSeriesMediaSubtree([System.IO.DirectoryInfo]$Dir) {
+    $one = @(Get-ChildItem -LiteralPath $Dir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-SeriesToolkitVideoExtension $_.Extension } | Select-Object -First 1)
+    if ($one.Count -gt 0) { return $true }
+    foreach ($sub in @(Get-ChildItem -LiteralPath $Dir.FullName -Directory -ErrorAction SilentlyContinue)) {
+        if ($null -ne (Resolve-SeasonFromFolderName $sub.Name)) { return $true }
+    }
+    return $false
+}
+
+function Test-AllImmediateSubdirsAreSeasonFolders([System.IO.DirectoryInfo]$Dir) {
+    $subs = @(Get-ChildItem -LiteralPath $Dir.FullName -Directory -ErrorAction SilentlyContinue)
+    if ($subs.Count -eq 0) { return $false }
+    foreach ($s in $subs) {
+        if ($null -eq (Resolve-SeasonFromFolderName $s.Name)) { return $false }
+    }
+    return $true
+}
+
+function Test-IsSagaContainerFolder([System.IO.DirectoryInfo]$Dir) {
+    $immediateV = @(Get-ChildItem -LiteralPath $Dir.FullName -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-SeriesToolkitVideoExtension $_.Extension })
+    if ($immediateV.Count -gt 0) { return $false }
+    $subs = @(Get-ChildItem -LiteralPath $Dir.FullName -Directory -ErrorAction SilentlyContinue)
+    if ($subs.Count -eq 0) { return $false }
+    if (Test-AllImmediateSubdirsAreSeasonFolders $Dir) { return $false }
+    $nonSeason = @($subs | Where-Object { $null -eq (Resolve-SeasonFromFolderName $_.Name) })
+    if ($nonSeason.Count -eq 1 -and $subs.Count -eq 1) {
+        return (Test-LooksLikeSeriesMediaSubtree $subs[0])
+    }
+    if ($subs.Count -lt 2) { return $false }
+    if ($nonSeason.Count -lt 2) { return $false }
+    foreach ($s in $subs) {
+        if (-not (Test-LooksLikeSeriesMediaSubtree $s)) { return $false }
+    }
+    return $true
+}
+
+function Get-SeriesRootsUnderLibrary([string]$LibraryRootPath) {
+    $out = [System.Collections.Generic.List[System.IO.DirectoryInfo]]::new()
+    function Walk-SeriesLibraryNode([System.IO.DirectoryInfo]$Node) {
+        if (Test-IsSagaContainerFolder $Node) {
+            foreach ($c in @(Get-ChildItem -LiteralPath $Node.FullName -Directory -ErrorAction SilentlyContinue)) {
+                Walk-SeriesLibraryNode $c
+            }
+            return
+        }
+        if (Test-LooksLikeSeriesMediaSubtree $Node) {
+            [void]$out.Add($Node)
+        }
+    }
+    foreach ($top in @(Get-ChildItem -LiteralPath $LibraryRootPath -Directory -ErrorAction SilentlyContinue)) {
+        Walk-SeriesLibraryNode $top
+    }
+    return $out
 }
 
 function Get-InferredSeasonFromFilePath([string]$FileDirectoryPath, [string]$SeriesRootPath) {
@@ -443,10 +581,34 @@ function Limit-HashtableToCyrillicEpisodeTitles([hashtable]$Map) {
     return $o
 }
 
-function Get-CombinedEpisodeTitleMap([string]$SeriesName) {
-    $map = @{}
-    if ([string]::IsNullOrWhiteSpace($SeriesName)) { return $map }
+function Expand-EpisodeTitleMapWithLatinFallback([hashtable]$Raw) {
+    if (-not $Raw -or $Raw.Count -eq 0) { return @{} }
+    $out = Limit-HashtableToCyrillicEpisodeTitles $Raw
+    if (-not $script:UserSettings.placeholder_repair_allow_latin_titles) { return $out }
+    foreach ($k in $Raw.Keys) {
+        if ($out.ContainsKey($k)) { continue }
+        $t = [string]$Raw[$k]
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        if ($t -match '\p{IsCyrillic}') { continue }
+        if (Get-Command Test-EpisodeTitleLooksLikePlaceholder -ErrorAction SilentlyContinue) {
+            if (Test-EpisodeTitleLooksLikePlaceholder $t) { continue }
+        }
+        elseif ($t -match '^(?i)(?:серия|episode)\s*\d+\s*$') { continue }
+        $out[$k] = $t
+    }
+    return $out
+}
 
+function Get-CombinedEpisodeMergedObjects {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SeriesName,
+        [int]$KinopoiskMinScore = 120,
+        [switch]$AggressiveDdg
+    )
+    if ([string]::IsNullOrWhiteSpace($SeriesName)) { return @() }
+
+    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: wikipedia search start" -f $SeriesName)
     $wikiList = $null
     try {
         if (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue) {
@@ -455,6 +617,21 @@ function Get-CombinedEpisodeTitleMap([string]$SeriesName) {
     } catch { }
     $wikiArr = @($wikiList)
 
+    if ($AggressiveDdg -and (Get-Command Get-EpisodesFromWikipediaAggressiveDdgMerge -ErrorAction SilentlyContinue)) {
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: aggressive DDG merge start" -f $SeriesName)
+        try {
+            $ag = Get-EpisodesFromWikipediaAggressiveDdgMerge $SeriesName
+            if ($ag -and @($ag).Count -gt 0) {
+                if ($wikiArr.Count -gt 0) {
+                    $wikiArr = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($wikiArr) + @($ag)))
+                } else {
+                    $wikiArr = @($ag)
+                }
+            }
+        } catch { }
+    }
+
+    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: TMDB search start" -f $SeriesName)
     $tmdbArr = $null
     $pick = $null
     if ($script:TmdbEnabled -and (Get-Command Search-TmdbTvSeries -ErrorAction SilentlyContinue) -and (Get-Command Get-EpisodesFromTmdbTvSeries -ErrorAction SilentlyContinue)) {
@@ -494,12 +671,13 @@ function Get-CombinedEpisodeTitleMap([string]$SeriesName) {
         $merged = $tmdbArr
     }
 
+    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: Kinopoisk verification start" -f $SeriesName)
     $kpArr = $null
     if (Get-Command Get-EpisodesFromKinopoiskVerifiedForSeries -ErrorAction SilentlyContinue) {
         try {
             $ru = if ($pick) { [string]$pick.name } else { $null }
             $orig = if ($pick) { [string]$pick.original_name } else { $null }
-            $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig
+            $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig -MinMatchScore $KinopoiskMinScore
         } catch { }
     }
     if ($merged -and @($merged).Count -gt 0 -and $kpArr -and @($kpArr).Count -gt 0 -and (Get-Command Merge-EpisodeTitlesPreferRu -ErrorAction SilentlyContinue)) {
@@ -510,10 +688,92 @@ function Get-CombinedEpisodeTitleMap([string]$SeriesName) {
     }
 
     if ($merged -and @($merged).Count -gt 0) {
-        $h = Convert-EpisodeObjectsToHashtable @($merged)
-        return (Limit-HashtableToCyrillicEpisodeTitles $h)
+        Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: merged episodes={1}" -f $SeriesName, @($merged).Count)
+        return @($merged)
     }
-    return $map
+    Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: merged episodes=0" -f $SeriesName)
+    return @()
+}
+
+function Get-CombinedEpisodeTitleMap {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SeriesName,
+        [int]$KinopoiskMinScore = 120,
+        [switch]$AggressiveDdg
+    )
+    $merged = @(Get-CombinedEpisodeMergedObjects -SeriesName $SeriesName -KinopoiskMinScore $KinopoiskMinScore -AggressiveDdg:$AggressiveDdg)
+    if ($merged.Count -gt 0) {
+        $h = Convert-EpisodeObjectsToHashtable @($merged)
+        return (Expand-EpisodeTitleMapWithLatinFallback $h)
+    }
+    return @{}
+}
+
+function Get-ExistingSeasonNumbersOnDisk([System.IO.DirectoryInfo]$SeriesDir) {
+    $set = @{}
+    foreach ($d in @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+        $sn = Resolve-SeasonFromFolderName $d.Name
+        if ($sn -and [int]$sn -gt 0) { $set[[int]$sn] = $true }
+    }
+    return $set
+}
+
+function Invoke-SeasonLibraryScaffold {
+    param(
+        [System.IO.DirectoryInfo]$SeriesDir,
+        [object[]]$MergedEpisodes
+    )
+    if (-not $script:UserSettings.create_missing_season_folders -and -not $script:UserSettings.write_episode_index_csv) { return }
+    $list = @($MergedEpisodes | Where-Object { $_ })
+    if ($list.Count -eq 0) { return }
+
+    $seasonsInData = @{}
+    $rows = [System.Collections.Generic.List[object]]::new()
+    foreach ($it in $list) {
+        $sn = if ($null -ne $it.season) { [int]$it.season } elseif ($null -ne $it.Season) { [int]$it.Season } else { 0 }
+        $en = if ($null -ne $it.episode) { [int]$it.episode } elseif ($null -ne $it.Episode) { [int]$it.Episode } else { 0 }
+        if ($sn -le 0 -or $en -le 0) { continue }
+        $seasonsInData[$sn] = $true
+        $tt = if ($null -ne $it.title) { [string]$it.title } elseif ($null -ne $it.Title) { [string]$it.Title } else { '' }
+        $code = ('S{0:00}E{1:00}' -f $sn, $en)
+        [void]$rows.Add([PSCustomObject]@{ season = $sn; episode = $en; code = $code; title = $tt })
+    }
+    if ($script:UserSettings.write_episode_index_csv -and $rows.Count -gt 0) {
+        $idxPath = Join-Path $SeriesDir.FullName 'SeriesToolkit-episode-index.csv'
+        $sorted = $rows | Sort-Object season, episode
+        if ($DryRun) {
+            Add-Record -Series $SeriesDir.Name -Action 'write-episode-index' -Status 'DRYRUN' -TargetPath $idxPath -Details ('Строк: {0}' -f $sorted.Count)
+        } else {
+            $sorted | Export-Csv -LiteralPath $idxPath -NoTypeInformation -Encoding UTF8
+            Add-Record -Series $SeriesDir.Name -Action 'write-episode-index' -Status 'OK' -TargetPath $idxPath -Details ('Строк: {0}' -f $sorted.Count)
+        }
+    }
+    if (-not $script:UserSettings.create_missing_season_folders) { return }
+    $onDisk = Get-ExistingSeasonNumbersOnDisk $SeriesDir
+    foreach ($sn in ($seasonsInData.Keys | Sort-Object)) {
+        if ($onDisk.ContainsKey([int]$sn)) { continue }
+        $folderName = Get-SeasonFolderName ([int]$sn)
+        $seasonPath = Join-Path $SeriesDir.FullName $folderName
+        $marker = Join-Path $seasonPath '.series-toolkit-scaffold'
+        $note = Join-Path $seasonPath '00-ОЖИДАЕТСЯ-НА-ДИСКЕ.txt'
+        if ($DryRun) {
+            Add-Record -Series $SeriesDir.Name -Action 'create-missing-season-scaffold' -Status 'DRYRUN' -TargetPath $seasonPath -Details 'Сезон есть в метаданных, папки на диске не было.'
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $seasonPath)) {
+            New-Item -ItemType Directory -Path $seasonPath -Force | Out-Null
+        }
+        $markerText = "SeriesToolkit: папка создана как заготовка под сезон {0}. Добавьте файлы эпизодов — тогда папка не будет пустой." -f $sn
+        Set-Content -LiteralPath $marker -Value $markerText -Encoding UTF8
+        $hint = @(
+            "Сезон $sn — в базе (TMDB/Кинопоиск/Википедия) есть список серий, на диске сезона не было.",
+            "Полный список: SeriesToolkit-episode-index.csv в корне сериала.",
+            "Можно удалить этот файл после добавления видео."
+        ) -join [Environment]::NewLine
+        Set-Content -LiteralPath $note -Value $hint -Encoding UTF8
+        Add-Record -Series $SeriesDir.Name -Action 'create-missing-season-scaffold' -Status 'OK' -TargetPath $seasonPath -Details 'Сезон из метаданных; маркер .series-toolkit-scaffold.'
+    }
 }
 
 function Test-IsPlaceholderEpisodeFileName([string]$BaseName) {
@@ -535,7 +795,9 @@ function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [has
         $title = $null
         if ($EpisodeTitlesMap.ContainsKey($key)) { $title = $EpisodeTitlesMap[$key] }
         if ([string]::IsNullOrWhiteSpace($title)) { continue }
-        if ($title -notmatch '\p{IsCyrillic}') { continue }
+        if ($title -notmatch '\p{IsCyrillic}') {
+            if (-not $script:UserSettings.placeholder_repair_allow_latin_titles) { continue }
+        }
         if (Get-Command Test-EpisodeTitleLooksLikePlaceholder -ErrorAction SilentlyContinue) {
             if (Test-EpisodeTitleLooksLikePlaceholder $title) { continue }
         }
@@ -560,6 +822,16 @@ function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [has
             Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'ERROR' -SourcePath $f.FullName -TargetPath $target -Details $_.Exception.Message
         }
     }
+}
+
+function Test-SeriesDirHasPlaceholderVideoFiles([System.IO.DirectoryInfo]$SeriesDir) {
+    $files = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$' })
+    foreach ($f in $files) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        if (Test-IsPlaceholderEpisodeFileName $base) { return $true }
+    }
+    return $false
 }
 
 function Add-WarningsForRemainingPlaceholders([System.IO.DirectoryInfo]$SeriesDir) {
@@ -728,17 +1000,76 @@ function Remove-EmptyDirectories([System.IO.DirectoryInfo]$SeriesDir) {
 }
 
 function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
+    Write-ToolkitProgress ("[SeriesToolkit] Обработка: {0}" -f $SeriesDir.FullName)
+    $seriesTotalStages = 8
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Старт обработки' -Index 0 -Total $seriesTotalStages
     Normalize-SeasonFolderNames -SeriesDir $SeriesDir
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Нормализация папок сезонов' -Index 1 -Total $seriesTotalStages
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
-    $combinedTitles = Get-CombinedEpisodeTitleMap -SeriesName $seriesName
-    $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $combinedTitles
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных (Wiki/TMDB/KP)' -Index 2 -Total $seriesTotalStages
+    $mergedFirst = @(Get-CombinedEpisodeMergedObjects -SeriesName $seriesName -KinopoiskMinScore 120)
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных завершён' -Index 3 -Total $seriesTotalStages
+    Invoke-SeasonLibraryScaffold -SeriesDir $SeriesDir -MergedEpisodes $mergedFirst
+    $mapFromNet = @{}
+    if ($mergedFirst.Count -gt 0) {
+        $mapFromNet = Expand-EpisodeTitleMapWithLatinFallback (Convert-EpisodeObjectsToHashtable @($mergedFirst))
+    }
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Построение плана переименований' -Index 4 -Total $seriesTotalStages
+    $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $mapFromNet
     $plan = Build-RenamePlanForSeries -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Resolve-TargetConflicts -Plan $plan
     Ensure-SeasonFolders -Plan $plan -SeriesName $SeriesDir.Name
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Применение плана' -Index 5 -Total $seriesTotalStages
     Apply-Plan -Plan $plan
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Ремонт заглушек Серия N' -Index 6 -Total $seriesTotalStages
     Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Remove-EmptyDirectories -SeriesDir $SeriesDir
+
+    if (-not (Test-SeriesDirHasPlaceholderVideoFiles $SeriesDir)) {
+        Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
+        Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово' -Index 8 -Total $seriesTotalStages
+        return
+    }
+
+    $kp2 = [int]$script:UserSettings.aggressive_second_pass_kinopoisk_min_score
+    if ($kp2 -lt 50) { $kp2 = 85 }
+    Add-Record -Series $SeriesDir.Name -Action 'second-pass-aggressive' -Status 'INFO' -Details ('Повторный сбор названий: DDG+ru.wikipedia, Кинопоиск minScore={0}, вторая строка поиска — имя папки.' -f $kp2)
+    $extraA = Get-CombinedEpisodeTitleMap -SeriesName $seriesName -KinopoiskMinScore $kp2 -AggressiveDdg
+    $rawLeaf = $SeriesDir.Name.Trim()
+    $extraB = @{}
+    if ($rawLeaf -ne $seriesName) {
+        $extraB = Get-CombinedEpisodeTitleMap -SeriesName $rawLeaf -KinopoiskMinScore $kp2 -AggressiveDdg
+    }
+    $extraMerged = Merge-EpisodeTitleMaps -Primary $extraA -Fallback $extraB
+    $allTitles2 = Merge-EpisodeTitleMaps -Primary $allTitles -Fallback $extraMerged
+    Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles2
+    Remove-EmptyDirectories -SeriesDir $SeriesDir
     Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
+    Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Готово (после 2-го прохода)' -Index 8 -Total $seriesTotalStages
 }
 
 if (Test-Path -LiteralPath $ReferenceRootPath) {
@@ -757,7 +1088,15 @@ if ($Mode -eq 'Manual') {
     Run-Series -SeriesDir $sd -HtmlTitles $htmlTitles
 } else {
     if (-not (Test-Path -LiteralPath $RootPath)) { throw "RootPath не найден: $RootPath" }
-    foreach ($sd in @(Get-ChildItem -LiteralPath $RootPath -Directory -ErrorAction SilentlyContinue)) {
+    $seriesRoots = @(Get-SeriesRootsUnderLibrary $RootPath)
+    if ($seriesRoots.Count -eq 0) {
+        Add-Record -Series '-' -Action 'library-scan' -Status 'WARN' -SourcePath $RootPath -Details 'Не найдено папок сериалов (нет видео/сезонов или пустой каталог).'
+    }
+    $idx = 0
+    foreach ($sd in $seriesRoots) {
+        $idx++
+        $pct = [int][Math]::Floor(($idx * 100.0) / [Math]::Max($seriesRoots.Count, 1))
+        Write-ToolkitProgress ("[SeriesToolkit][LibraryProgress {0}% {1}/{2}] {3}" -f $pct, $idx, $seriesRoots.Count, $sd.FullName)
         Run-Series -SeriesDir $sd -HtmlTitles $htmlTitles
     }
 }
@@ -782,5 +1121,5 @@ $summary = @(
     "TXT: $txtPath"
 ) -join [Environment]::NewLine
 Set-Content -LiteralPath $txtPath -Value $summary -Encoding UTF8
-Write-Host $summary
+Write-ToolkitProgress $summary
 

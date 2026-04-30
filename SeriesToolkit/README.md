@@ -1,163 +1,127 @@
 ﻿# SeriesToolkit
 
-`SeriesToolkit` — переносимый набор скриптов для нормализации библиотек **сериалов и мультсериалов**.
+**SeriesToolkit** — это «одна папка — один инструмент» для навода порядка в библиотеках **сериалов и мультсериалов**.
+Это основной и актуальный релиз проекта: здесь текущий движок, GUI, сборка EXE и документация.
 
-Инструмент работает как в массовом режиме (вся библиотека), так и в ручном режиме (один сериал), приводит структуру сезонов к единому виду, переименовывает эпизоды по шаблону и сохраняет подробные логи.
+## Зачем это нужно (по-человечески)
+
+- В папках бардак: «Сезон 1», `Season 01`, файлы лежат не там.
+- Имена файлов не совпадают с тем, как вы ищете серии.
+- Хочется **сначала посмотреть план** (dry-run), потом один раз применить.
+- Нужны **русские названия эпизодов**, где они вообще существуют в открытых источниках.
+
+SeriesToolkit как раз это делает и пишет подробный **CSV-лог**, чтобы ничего не потерять.
+
+## Быстрые ссылки для тестеров (без git)
+
+| Что скачать | Прямая ссылка |
+|-------------|----------------|
+| **Архив всего проекта** (ветка `master`) | [SeriesToolkit-master.zip](https://github.com/emildg8/SeriesToolkit/archive/refs/heads/master.zip) |
+| **Только launcher** (скрипт; положите рядом остальные файлы из ZIP) | [SeriesToolkit.ps1 (raw)](https://raw.githubusercontent.com/emildg8/SeriesToolkit/master/SeriesToolkit.ps1) |
+| **Сборки / стабильные ZIP** | [Releases](https://github.com/emildg8/SeriesToolkit/releases/latest) |
+
+После скачивания ZIP распакуйте в любую папку, рядом должен остаться родительский **`Fetch-VideoMetadata.ps1`** (в архиве он в корне пакета, если синхронизация с родительским репозиторием настроена — см. `Sync-GitHub.ps1`).
+
+## Как это выглядит (GUI)
+
+Актуальные скриншоты интерфейса:
+
+![Окно SeriesToolkit GUI](docs/images/01-gui-main.png)
+![DryRun с прогрессом](docs/images/02-dryrun-summary.png)
+
+Как сделать **настоящие** скриншоты у себя — пошагово: [docs/SCREENSHOTS-RU.md](docs/SCREENSHOTS-RU.md).
+
+## Вложенные папки («сага» → отдельные сериалы)
+
+Если структура такая:
+
+```text
+Сериалы\
+  Звёздные войны\
+    Войны клонов\     ← отдельный сериал
+      Сезон 1\ ...
+    Повстанцы\        ← другой сериал
+```
+
+то toolkit **не склеивает** «Звёздные войны» в один сериал: он обходит контейнер и обрабатывает **каждую внутреннюю папку**, которая выглядит как отдельное шоу (есть видео или папки сезонов). Если в корне контейнера лежат сами видеофайлы, контейнер считается **одним** сериалом — как раньше.
+
+## Недостающие сезоны на диске
+
+Если в метаданных (TMDB и др.) есть **сезон 3**, а на диске папки нет, при включённой настройке (по умолчанию **да**):
+
+- создаётся папка сезона;
+- внутри — служебный маркер `.series-toolkit-scaffold` и короткая подсказка;
+- в **корне сериала** пишется **`SeriesToolkit-episode-index.csv`** — полный список эпизодов из базы, чтобы быстрее ориентироваться при следующей докачке.
+
+Отключить можно в `SeriesToolkit.settings.json`: `create_missing_season_folders`, `write_episode_index_csv`.
 
 ## Что делает toolkit
 
-- Нормализует папки сезонов (шаблон по умолчанию `Сезон N`, настраивается).
-- Перемещает файлы в правильные папки сезонов.
-- Переименовывает эпизоды по настраиваемому шаблону (по умолчанию `Название сериала - S01E01 - Название эпизода` — см. `SeriesToolkit.settings.example.json`).
-- Поддерживает источники **русскоязычных** названий эпизодов (в имена файлов попадают только строки **с кириллицей**):
-  - локальный HTML (ручной режим),
-  - ru.wikipedia (списки эпизодов и расширение через `Fetch-VideoMetadata.ps1`),
-  - **Кинопоиск** (поиск `kp_query`, сверка заголовка карточки с именем папки и с выбранным по TMDB сериалом, затем страница эпизодов),
-  - TMDB API `ru-RU` (подмешивается в слияние; голые английские подписи в переименование не идут).
-- Применяет безопасное планирование операций:
-  - предотвращение коллизий имён,
-  - аккуратная уникализация (`[1]`, `[2]`) при необходимости.
-- Удаляет пустые папки после перемещений.
-- Пишет логи:
-  - детальный CSV по каждому действию,
-  - итоговый TXT-отчёт.
-- Автоматизирует релизный цикл:
-  - автоинкремент версии при каждом запуске `SeriesToolkit.ps1`,
-  - автоснимок предыдущей версии в `OLD`,
-  - авто-синхронизация с GitHub через `Sync-GitHub.ps1` (если настроен `gh`).
+- Приводит имена папок сезонов к одному шаблону (по умолчанию `Сезон N`).
+- Строит безопасный план переименований и перемещений, снимает коллизии.
+- Подтягивает названия эпизодов (HTML вручную, ru.wikipedia, Кинопоиск при доступе, TMDB `ru-RU`; опционально латиница для заглушек — см. настройки).
+- Удаляет **пустые** папки после работы (папки-заготовки с маркером не пустые).
 
-## Режимы запуска
+## Режимы
 
-- **Batch** — обработка всех сериалов в корне библиотеки.
-- **Manual** — обработка одного сериала (например, с локальным HTML-файлом названий).
+- **Batch** — вся библиотека по `RootPath`.
+- **Manual** — один сериал + опционально локальный HTML со списком серий.
 
-## CLI запуск
+## Запуск из PowerShell
 
-### 1) Массовый dry-run (без изменений)
+**Пробный прогон (ничего не меняет на диске):**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\server\share\Сериалы" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -DryRun
 ```
 
-### 2) Массовый apply (боевой запуск)
+**Боевой:**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\server\share\Сериалы" -Apply
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -Apply -UseTmdb
 ```
 
-### 3) Ручной режим для одного сериала
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Manual -SeriesPath "\\server\share\Сериалы\Название сериала" -HtmlPath "D:\episode-list.html" -Apply
-```
-
-## GUI запуск
-
-Минималистичный GUI (RU/EN):
+## GUI
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 ```
 
-При старте GUI и движка для **текущего процесса** выставляется `ExecutionPolicy Bypass`, чтобы dot-source **`UiStrings.ps1`** и **`Fetch-VideoMetadata.ps1`** работали даже при системной политике `Restricted`. При желании глобально: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`.
+Во время работы GUI теперь показывает:
+- общий прогресс библиотеки: `LibraryProgress % (i/N)`;
+- прогресс текущего сериала: `SeriesProgress % (этап/всего)`;
+- метрики времени: **время старта**, **сколько прошло**, **ETA (оценка завершения)**;
+- отдельную визуальную общую шкалу процента выполнения библиотеки;
+- «последняя активность Nс назад» (если долго нет новых строк — видно, что происходит тяжёлый этап);
+- кнопки **Пауза / Продолжить**, **Пропуск** (текущий сериал) и **Стоп** без закрытия окна;
+- при нажатии **Стоп** — корректный финальный статус «прервано пользователем» с краткой статистикой выполнения.
 
-## Файл настроек (TMDB, cookie Кинопоиска, шаблоны имён)
+Служебные GUI-логи:
+- `LOGS/gui-session-*.log` — события GUI (старт, кнопки, причины закрытия, ошибки);
+- `LOGS/gui-progress-*.log` — поток прогресса от движка.
 
-1. Скопируйте **`SeriesToolkit.settings.example.json`** → **`SeriesToolkit.settings.json`** рядом с `SeriesToolkit.ps1`.
-2. Подробные пояснения — в **`SeriesToolkit.settings.README.md`**.
-3. Кратко:
-   - **`tmdb_api_key`** — ключ TMDB (на время запуска кладётся в переменную процесса).
-   - **`kinopoisk_cookie`** — строка из браузера: **F12 → Сеть → запрос к kinopoisk.ru → Заголовки → `cookie:`** (всё значение одной строкой). То же можно задать через `setx KINOPOISK_COOKIE "..."`.
-   - **`episode_filename_format`** — плейсхолдеры `{Series}`, `{Code}`, `{Title}`, `{Season}`, `{Episode}`.
-   - **`season_folder_format`** — плейсхолдер `{Season}` (осторожно: распознавание старых папок заточено под типичные виды вроде `Сезон 1`).
+Для упаковки в один файл: `.\Build-SeriesToolkitExe.ps1` → `SeriesToolkit.GUI.exe`.  
+У EXE и у окна во время выполнения используется иконка `assets/SeriesToolkit.icon.ico`; при сборке старый `SeriesToolkit.GUI.exe` автоматически ротируется в `.bak`.
 
-Файл с секретами **`SeriesToolkit.settings.json`** в корневом `.gitignore` не попадает в git.
+**EXE пересобирается автоматически**, когда меняется **`SeriesToolkit.ps1`** и срабатывает инкремент версии (см. `Bump-Version.ps1`). Отключить пересборку: `-SkipAutoBuildExe` у launcher.
 
-## TMDB
+## Настройки и секреты
 
-Для получения названий эпизодов с TMDB:
+1. Скопируйте `SeriesToolkit.settings.example.json` → **`SeriesToolkit.settings.json`**.
+2. Подробно: **`SeriesToolkit.settings.README.md`**.
+3. Файл с ключами и cookie **не коммитьте** (см. корневой `.gitignore`).
 
-1. Получите API key в TMDB.
-2. Либо **`SeriesToolkit.settings.json`** (`tmdb_api_key`), либо переменная окружения:
+## Версии, OLD и GitHub
 
-```powershell
-setx TMDB_API_KEY "ВАШ_КЛЮЧ"
-```
-
-Если TMDB недоступен из сети, toolkit опирается на Википедию и Кинопоиск (при отсутствии капчи на стороне KP).
-
-### Кинопоиск и антибот
-
-Скрипт не обходит юридически значимую защиту (капчу нужно пройти в браузере). Для снижения ложных срабатываний:
-
-1. По умолчанию для HTML Кинопоиска используется **`curl.exe`** (Windows 10+), если не задано `SERIESTOOLKIT_KP_USE_CURL=0`.
-2. Cookie: **`SeriesToolkit.settings.json`** → `kinopoisk_cookie`, или `setx KINOPOISK_COOKIE "..."` / `SERIESTOOLKIT_KINOPOISK_COOKIE`. Откуда брать: **Chrome → F12 → Network → любой запрос к kinopoisk.ru → Headers → Request Headers → `cookie:`** (скриншот 2 в вашем запросе — нужна именно эта длинная строка).
-3. Опционально: `setx SERIESTOOLKIT_KP_DELAY_MS 800` — пауза перед запросом (мс).
-4. Если EXE/скрипты лежат нестандартно: `setx SERIESTOOLKIT_ROOT "D:\путь\к\SeriesToolkit"`.
-
-### Модуль метаданных
-
-Движок подключает родительский **`Fetch-VideoMetadata.ps1`** (на уровень выше каталога `SeriesToolkit` или рядом с ним). Без этого файла сетевые источники (Википедия, Кинопоиск, TMDB) не загружаются.
+- Версия в `version.json`.
+- **Инкремент версии и снимок в `OLD/`** выполняются **только когда изменился файл `SeriesToolkit.ps1`** (хэш сравнивается с локальным `.launcher-content.sha256`, файл в `.gitignore`).
+- После успешного bump по желанию пересобирается **EXE** (если установлен модуль `ps2exe`).
+- `Sync-GitHub.ps1` публикует копию без секретов в репозиторий **emildg8/SeriesToolkit** и автоматически делает/обновляет GitHub Release `vX.Y.Z` с ZIP-архивом.
 
 ## Логи
 
-По умолчанию логи сохраняются в `.\LOGS`:
+Каталог `LOGS`: CSV по операциям и краткий TXT.
 
-- `series-toolkit-vX.Y.Z-*.csv` — подробный лог действий (в имени есть версия, дата, время),
-- `series-toolkit-*.txt` — краткий итог.
+## Обратная связь
 
-Старые логи из `logs` перенесены в `LOGS` для единого хранения.
-
-## OLD (архив версий)
-
-При каждом запуске `SeriesToolkit.ps1` создаётся snapshot предыдущей версии в `OLD`:
-
-- формат: `OLD/SeriesToolkit_v<old_version>_<yyyyMMdd-HHmmss>`
-- содержит ключевые скрипты, `README`, `CHANGELOG`, `version.json`
-- позволяет откатиться к стабильной версии вручную.
-
-## Обратная совместимость
-
-Точки входа:
-
-- `SeriesToolkit.ps1`
-- `Start-SeriesToolkitGui.ps1`
-
-## EXE GUI
-
-Для сборки исполняемого файла GUI:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-SeriesToolkitExe.ps1
-```
-
-Результат: `SeriesToolkit.GUI.exe` в корне проекта.
-
-Рядом с `.exe` должны лежать те же файлы, что и при запуске `.ps1` (`SeriesToolkit.ps1`, `Start-SeriesToolkitGui.Engine.ps1`, `UiStrings.ps1`, `SeriesToolkit.Engine.ps1`, `Fetch-VideoMetadata.ps1` выше по дереву или рядом). Сборка: **`Build-SeriesToolkitExe.ps1` компилирует `Start-SeriesToolkitGui.Engine.ps1`** в `SeriesToolkit.GUI.exe`. После обновления скриптов пересоберите EXE (закройте старый EXE, если Windows блокирует перезапись).
-
-## Версионирование
-
-- Версия хранится в `version.json`.
-- Инкремент патча при каждом запуске `SeriesToolkit.ps1` (см. `Bump-Version.ps1`): `0.0.9 -> 0.1.0` при переполнении разрядов по правилам скрипта.
-- Новые записи в `CHANGELOG.md` **всегда сверху** (см. `.cursor/rules/series-toolkit-versioning.mdc`).
-
-## GitHub: публичный и второй remote
-
-- Основная публикация: `emildg8/SeriesToolkit` (скрипт `Sync-GitHub.ps1` копирует проект в `.publish/SeriesToolkit` и пушит в `origin`).
-- Для **второго** репозитория (например закрытого) передайте при вызове:
-
-```powershell
-.\Sync-GitHub.ps1 -SecondaryRemoteName private -SecondaryRemoteUrl "https://github.com/ORG/PRIVATE.git"
-```
-
-(нужен `gh`/git и права push на оба remote.)
-
-## Скачивание старых версий
-
-Чтобы всегда можно было откатиться к рабочей версии:
-
-- в GitHub созданы теги и релизы (`v0.0.1`, `v0.0.3`, `v0.0.4`);
-- у каждого релиза есть свой ZIP-архив исходников в состоянии этой версии;
-- внутри архива находятся соответствующие версии `README.md` и `CHANGELOG.md`.
-
-Релизы: [https://github.com/emildg8/SeriesToolkit/releases](https://github.com/emildg8/SeriesToolkit/releases)
+Репозиторий: [https://github.com/emildg8/SeriesToolkit](https://github.com/emildg8/SeriesToolkit)
