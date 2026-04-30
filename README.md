@@ -88,6 +88,12 @@ SeriesToolkit как раз это делает и пишет подробный
 powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -DryRun
 ```
 
+**Проверка (VerifyOnly: строит план/логи, но не меняет файлы):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -VerifyOnly -ExecutionProfile Full
+```
+
 **Боевой:**
 
 ```powershell
@@ -139,6 +145,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 ## Логи
 
 Каталог `LOGS`: CSV по операциям, краткий TXT и отдельный `*-renames.txt` с явным `FROM -> TO` по переименованиям.
+Также формируется `*-renames.csv` для фильтрации/аналитики в Excel/BI.
 
 ## Если метаданные не нашлись
 
@@ -146,6 +153,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 - Убедитесь, что корректно задан `tmdb_api_key` в `SeriesToolkit.settings.json`; без ключа TMDB отключается и используются fallback-источники.
 - Для Кинопоиска обновите `kinopoisk_cookie` (если устарел сеанс, растёт шанс капчи/пустых ответов).
 - Увеличьте `metadata_request_timeout_sec` (например, до `90`) при медленном интернете.
+- Подключите алиасы в `series-aliases.json` (шаблон: `series-aliases.example.json`) для сложных/франшизных названий.
 - Для повторной проверки проблемного сериала запустите `Manual + DryRun`, чтобы быстро увидеть причины в `LOGS/gui-progress-*.log`.
 - Если в файлах остались заглушки `Серия N`, проверьте `*-renames.txt` и `SeriesToolkit-episode-index.csv` в папке сериала: там видно, что найдено и что не удалось сопоставить.
 

@@ -1,5 +1,13 @@
 ﻿# CHANGELOG
 
+## 0.1.21 - 2026-04-30 16:22:00 +03:00
+- Безопасность: добавлен порог `rename_min_confidence_apply` (0-100). Операции ниже порога не применяются и фиксируются как `skip-low-confidence`.
+- Отчёты: добавлен `*-renames.csv` и агрегаты в итоговом TXT (`RenamedOk`, `RenamedDryRun`, `SkippedLowConfidence`).
+- Режимы: добавлен `VerifyOnly` (CLI/GUI/engine) — сбор метаданных, построение плана и логи без изменений на диске.
+- Поиск: добавлена поддержка алиасов сериалов через `series-aliases.json` (шаблон `series-aliases.example.json`) для TMDB/Wiki/КП запросов.
+- Документация: обновлены `README.md` и `SeriesToolkit.settings.README.md` (VerifyOnly, renames.csv, aliases).
+- Публикация: `Sync-GitHub.ps1` теперь включает `series-aliases.example.json` при синхронизации.
+
 ## 0.1.20 - 2026-04-30 16:16:00 +03:00
 - Документация: для устранения кеша изображений обновлён путь скриншота в `README.md` и `docs/SCREENSHOTS-RU.md` на `docs/images/01-gui-main-v2.png`.
 - Скриншоты: синхронизированы `docs/images/01-gui-main-v2.png`, `docs/images/01-gui-main.png` и `docs/gui-mockup.png` одним актуальным изображением GUI.

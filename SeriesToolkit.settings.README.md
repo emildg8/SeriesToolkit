@@ -19,6 +19,8 @@
 | `metadata_cache_force_refresh` | Если `true`, игнорировать кэш и всегда обновлять из сети. |
 | `metadata_request_timeout_sec` | Базовый таймаут сетевых запросов метаданных (сек). |
 | `metadata_web_search_engines` | Порядок web-поиска для агрессивного режима `Full`. Массив из: `ddg`, `yandex`, `google`. Можно отключать/менять порядок. |
+| `rename_min_confidence_apply` | Минимальный confidence (0-100) для применения переименования. Ниже порога операция помечается как `skip-low-confidence` и не применяется. |
+| `series_aliases_file` | Путь к JSON-файлу алиасов названий сериалов (по умолчанию `series-aliases.json` рядом с toolkit). Алиасы используются как дополнительные поисковые запросы для TMDB/Wiki/КП. |
 | `metadata_enable_stage_timing` | Если `true`, писать тайминги этапов (`wiki/tmdb/kp/ddg/merge/plan/apply`) в лог. |
 | `metadata_slow_series_top_n` | Сколько самых медленных сериалов показать в итоговой сводке. |
 | `placeholder_repair_allow_latin_titles` | Если `true`, для заглушек «Серия N» допускаются **латинские** названия из TMDB, когда кириллицы нет. |
@@ -53,4 +55,17 @@
 
 ```json
 "metadata_web_search_engines": ["yandex", "ddg"]
+```
+
+Пример aliases-файла (`series-aliases.json`):
+
+```json
+{
+  "aliases": {
+    "Звёздные войны - Войны клонов": [
+      "Войны клонов",
+      "Star Wars: The Clone Wars"
+    ]
+  }
+}
 ```

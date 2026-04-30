@@ -191,6 +191,8 @@ $cbTmdb.Left = 20; $cbTmdb.Top = 256; $cbTmdb.Width = 220
 $cbDry = New-Object Windows.Forms.CheckBox
 $cbDry.Left = 260; $cbDry.Top = 256; $cbDry.Width = 280
 $cbDry.Checked = $true
+$cbVerify = New-Object Windows.Forms.CheckBox
+$cbVerify.Left = 260; $cbVerify.Top = 280; $cbVerify.Width = 280
 
 $lblProfile = New-Object Windows.Forms.Label
 $lblProfile.Left = 560; $lblProfile.Top = 258; $lblProfile.Width = 120
@@ -345,6 +347,7 @@ function Update-Layout {
 
     $cbTmdb.Left = $pad; $cbTmdb.Top = 256; $cbTmdb.Width = 220
     $cbDry.Left = 260; $cbDry.Top = 256; $cbDry.Width = 280
+    $cbVerify.Left = 260; $cbVerify.Top = 280; $cbVerify.Width = 280
 
     $cbProfile.Left = $fullW - $pad - 260; $cbProfile.Top = 254; $cbProfile.Width = 260
     $lblProfile.Left = $cbProfile.Left - 130; $lblProfile.Top = 258; $lblProfile.Width = 125
@@ -375,6 +378,7 @@ function Refresh-Texts {
     $lblHtml.Text = $script:s.HtmlPath
     $cbTmdb.Text = $script:s.UseTmdb
     $cbDry.Text = $script:s.DryRun
+    $cbVerify.Text = $script:s.VerifyOnly
     $lblProfile.Text = [string]$script:s.ExecutionProfile
     $selectedValue = 'Balanced'
     if ($cbProfile.SelectedIndex -ge 0 -and $cbProfile.SelectedIndex -lt $script:ProfileItems.Count) {
@@ -537,6 +541,15 @@ $cbLang.Add_SelectedIndexChanged({
     Refresh-Texts
 })
 
+$cbVerify.Add_CheckedChanged({
+    if ($cbVerify.Checked) {
+        $cbDry.Checked = $true
+        $cbDry.Enabled = $false
+    } else {
+        $cbDry.Enabled = $true
+    }
+})
+
 $btnPause.Add_Click({
     if (-not $script:RunInProgress -or -not $script:CurrentProcess) { return }
     try {
@@ -629,6 +642,7 @@ $btnRun.Add_Click({
             Add-Args $argList @('-HtmlPath', $tbHtml.Text.Trim())
         }
         if ($cbTmdb.Checked) { [void]$argList.Add('-UseTmdb') }
+        if ($cbVerify.Checked) { [void]$argList.Add('-VerifyOnly') }
         if ($cbProfile.SelectedItem) {
             $profileValue = 'Balanced'
             if ($cbProfile.SelectedIndex -ge 0 -and $cbProfile.SelectedIndex -lt $script:ProfileItems.Count) {
@@ -665,7 +679,7 @@ $btnRun.Add_Click({
     }
 })
 
-$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $lineTop, $pbOverall, $lineBottom, $tbLog))
+$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $cbVerify, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $lineTop, $pbOverall, $lineBottom, $tbLog))
 $form.Add_Shown({ Update-Layout })
 $form.Add_SizeChanged({ Update-Layout })
 $timer = New-Object Windows.Forms.Timer

@@ -95,6 +95,7 @@ $allowedFiles = @(
     'SeriesToolkit.ps1',
     'SeriesToolkit.settings.example.json',
     'SeriesToolkit.settings.README.md',
+    'series-aliases.example.json',
     'Start-SeriesToolkitGui.Engine.ps1',
     'Start-SeriesToolkitGui.ps1',
     'Sync-GitHub.ps1',

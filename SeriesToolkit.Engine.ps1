@@ -13,7 +13,8 @@ param(
     [switch]$UseTmdb,
     [string]$TmdbApiKey = '',
     [ValidateSet('Fast', 'Balanced', 'Full')]
-    [string]$ExecutionProfile = 'Balanced'
+    [string]$ExecutionProfile = 'Balanced',
+    [switch]$VerifyOnly
 )
 
 try {
@@ -53,7 +54,9 @@ function Get-TmdbApiKeyFromEnvironment {
     return $null
 }
 
+if ($VerifyOnly -and $Apply) { throw 'Нельзя одновременно указывать -VerifyOnly и -Apply.' }
 if ($Apply -and $DryRun) { throw 'Нельзя одновременно указывать -Apply и -DryRun.' }
+if ($VerifyOnly) { $DryRun = $true }
 if (-not $Apply) { $DryRun = $true }
 if ([string]::IsNullOrWhiteSpace($LogDirectory)) { $LogDirectory = Join-Path $PSScriptRoot 'LOGS' }
 if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null }
@@ -68,6 +71,8 @@ $script:UserSettings = @{
     metadata_cache_force_refresh = $false
     metadata_request_timeout_sec = 60
     metadata_web_search_engines = @('ddg', 'yandex', 'google')
+    rename_min_confidence_apply = 75
+    series_aliases_file = 'series-aliases.json'
     metadata_enable_stage_timing = $true
     metadata_slow_series_top_n = 10
     placeholder_repair_allow_latin_titles = $false
@@ -128,6 +133,12 @@ function Import-SeriesToolkitUserSettings {
             }
             if ($arr.Count -gt 0) { $script:UserSettings.metadata_web_search_engines = @($arr | Select-Object -Unique) }
         }
+        if ($key -contains 'rename_min_confidence_apply' -and $null -ne $j.rename_min_confidence_apply) {
+            $script:UserSettings.rename_min_confidence_apply = [int]$j.rename_min_confidence_apply
+        }
+        if ($key -contains 'series_aliases_file' -and $j.series_aliases_file) {
+            $script:UserSettings.series_aliases_file = [string]$j.series_aliases_file
+        }
         if ($key -contains 'metadata_enable_stage_timing' -and $null -ne $j.metadata_enable_stage_timing) {
             $script:UserSettings.metadata_enable_stage_timing = [bool]$j.metadata_enable_stage_timing
         }
@@ -174,6 +185,7 @@ $script:SeriesTitlesCache = @{}
 $script:SeriesMetaCache = @{}
 $script:SeriesMetaCachePath = Join-Path $PSScriptRoot 'LOGS\series-meta-cache.json'
 $script:SeriesStageDurations = [System.Collections.Generic.List[object]]::new()
+$script:SeriesAliases = @{}
 $script:ProgressLogPath = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_PROGRESS_LOG', 'Process')
 $script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
 $script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
@@ -336,6 +348,59 @@ function Normalize-ForTmdbSearch([string]$Text) {
     $t = $t -replace '[\._\-]+', ' '
     $t = $t -replace '\s+', ' '
     return $t.Trim()
+}
+
+function Get-RenameMinConfidenceApply {
+    $v = [int]$script:UserSettings.rename_min_confidence_apply
+    if ($v -lt 0) { $v = 0 }
+    if ($v -gt 100) { $v = 100 }
+    return $v
+}
+
+function Resolve-SeriesAliasesFilePath {
+    $p = [string]$script:UserSettings.series_aliases_file
+    if ([string]::IsNullOrWhiteSpace($p)) { $p = 'series-aliases.json' }
+    if ([System.IO.Path]::IsPathRooted($p)) { return $p }
+    return (Join-Path $PSScriptRoot $p)
+}
+
+function Import-SeriesAliases {
+    $script:SeriesAliases = @{}
+    $path = Resolve-SeriesAliasesFilePath
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    try {
+        $obj = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -eq $obj -or $null -eq $obj.aliases) { return }
+        foreach ($p in $obj.aliases.PSObject.Properties) {
+            $keyRaw = [string]$p.Name
+            if ([string]::IsNullOrWhiteSpace($keyRaw)) { continue }
+            $vals = @()
+            foreach ($v in @($p.Value)) {
+                $x = ([string]$v).Trim()
+                if ([string]::IsNullOrWhiteSpace($x)) { continue }
+                if ($x -notin $vals) { $vals += $x }
+            }
+            if ($vals.Count -eq 0) { continue }
+            $keyNorm = Normalize-ForTmdbSearch $keyRaw
+            if ([string]::IsNullOrWhiteSpace($keyNorm)) { continue }
+            $script:SeriesAliases[$keyNorm] = $vals
+        }
+    } catch { }
+}
+
+function Get-SeriesSearchQueryCandidates([string]$SeriesName) {
+    $out = [System.Collections.Generic.List[string]]::new()
+    $main = ([string]$SeriesName).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($main)) { [void]$out.Add($main) }
+    $norm = Normalize-ForTmdbSearch $main
+    if (-not [string]::IsNullOrWhiteSpace($norm) -and $script:SeriesAliases.ContainsKey($norm)) {
+        foreach ($a in @($script:SeriesAliases[$norm])) {
+            $q = ([string]$a).Trim()
+            if ([string]::IsNullOrWhiteSpace($q)) { continue }
+            if ($q -notin $out) { [void]$out.Add($q) }
+        }
+    }
+    return @($out)
 }
 
 function Get-TmdbScore([string]$Expected, [string]$CandidateRu, [string]$CandidateOrig) {
@@ -1108,6 +1173,7 @@ function Normalize-SeasonFolderNames([System.IO.DirectoryInfo]$SeriesDir) {
 }
 
 function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
+    $minConfidenceApply = Get-RenameMinConfidenceApply
     foreach ($op in $Plan) {
         if ($op.source -ieq $op.target) {
             $bn = [System.IO.Path]::GetFileNameWithoutExtension($op.source)
@@ -1116,6 +1182,12 @@ function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
             } else {
                 Add-Record -Series $op.series -Action 'skip-file' -Status 'INFO' -SourcePath $op.source -Details 'Уже корректно.'
             }
+            continue
+        }
+        $opConfidence = if ($null -ne $op.confidence) { [int]$op.confidence } else { 0 }
+        if ($opConfidence -lt $minConfidenceApply) {
+            Add-Record -Series $op.series -Action 'skip-low-confidence' -Status 'WARN' -SourcePath $op.source -TargetPath $op.target -Details ("confidence={0} < threshold={1}; pattern={2}" -f $opConfidence, $minConfidenceApply, $op.pattern)
+            Write-ToolkitProgress ("[SeriesToolkit][Rename][SKIP-LOW-CONFIDENCE] {0} -> {1} :: confidence={2} threshold={3}" -f $op.source, $op.target, $opConfidence, $minConfidenceApply)
             continue
         }
         if ($DryRun) {
@@ -1171,6 +1243,10 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Нормализация папок сезонов' -Index 1 -Total $seriesTotalStages
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
+    $seriesRawName = $SeriesDir.Name.Trim()
+    $seriesQueryCandidates = @(Get-SeriesSearchQueryCandidates $seriesRawName)
+    if ($seriesQueryCandidates.Count -eq 0) { $seriesQueryCandidates = @($seriesName) }
+    if ($seriesName -notin $seriesQueryCandidates) { $seriesQueryCandidates += $seriesName }
     $profile = Get-ExecutionProfileResolved
     Write-ToolkitProgress ("[SeriesToolkit][Profile] {0} :: {1}" -f $SeriesDir.Name, $profile)
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных (Wiki/TMDB/KP)' -Index 2 -Total $seriesTotalStages
@@ -1183,27 +1259,39 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
         $cacheUsed = $true
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: cache hit episodes={1}" -f $seriesName, $mergedFirst.Count)
     } else {
-        $metaArgs = @{
-            SeriesName        = $seriesName
-            KinopoiskMinScore = 120
-        }
-        switch ($profile) {
-            'Fast' {
-                if ($script:TmdbEnabled) {
-                    $metaArgs['SkipWikipedia'] = $true
-                    $metaArgs['SkipKinopoisk'] = $true
-                } else {
-                    $metaArgs['SkipKinopoisk'] = $true
+        foreach ($query in $seriesQueryCandidates) {
+            $metaArgs = @{
+                SeriesName        = $query
+                KinopoiskMinScore = 120
+            }
+            switch ($profile) {
+                'Fast' {
+                    if ($script:TmdbEnabled) {
+                        $metaArgs['SkipWikipedia'] = $true
+                        $metaArgs['SkipKinopoisk'] = $true
+                    } else {
+                        $metaArgs['SkipKinopoisk'] = $true
+                    }
+                }
+                'Balanced' {
+                    # TMDB + Wiki + KP (или Wiki + KP без API)
+                }
+                'Full' {
+                    $metaArgs['AggressiveWeb'] = $true
                 }
             }
-            'Balanced' {
-                # TMDB + Wiki + KP (или Wiki + KP без API)
+            if ($query -ne $seriesRawName) {
+                Write-ToolkitProgress ("[SeriesToolkit][Alias] {0} :: query => {1}" -f $SeriesDir.Name, $query)
             }
-            'Full' {
-                $metaArgs['AggressiveWeb'] = $true
+            $chunk = @(Get-CombinedEpisodeMergedObjects @metaArgs)
+            if ($chunk.Count -eq 0) { continue }
+            if ($mergedFirst.Count -eq 0) {
+                $mergedFirst = $chunk
+            } else {
+                $mergedFirst = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($mergedFirst) + @($chunk)))
             }
+            if ($mergedFirst.Count -ge 12) { break }
         }
-        $mergedFirst = @(Get-CombinedEpisodeMergedObjects @metaArgs)
         if ($mergedFirst.Count -gt 0) { Set-SeriesMetaToCache -SeriesName $seriesName -Episodes $mergedFirst }
     }
     Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'meta_first_pass' -StartedAt $stageMetaStarted
@@ -1283,12 +1371,17 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     if ($kp2 -lt 50) { $kp2 = 85 }
     Add-Record -Series $SeriesDir.Name -Action 'second-pass-aggressive' -Status 'INFO' -Details ('Повторный сбор названий: DDG+ru.wikipedia, Кинопоиск minScore={0}, вторая строка поиска — имя папки.' -f $kp2)
     $stageSecondStarted = Get-Date
-    $extraA = Get-CombinedEpisodeTitleMap -SeriesName $seriesName -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
-    $rawLeaf = $SeriesDir.Name.Trim()
-    $extraB = @{}
-    if ($rawLeaf -ne $seriesName) {
-        $extraB = Get-CombinedEpisodeTitleMap -SeriesName $rawLeaf -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
+    $extraA = @{}
+    foreach ($q in $seriesQueryCandidates) {
+        $m = Get-CombinedEpisodeTitleMap -SeriesName $q -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
+        $extraA = Merge-EpisodeTitleMaps -Primary $extraA -Fallback $m
+        if ($q -ne $seriesRawName -and $m.Count -gt 0) {
+            Write-ToolkitProgress ("[SeriesToolkit][Alias] {0} :: second-pass query => {1}" -f $SeriesDir.Name, $q)
+        }
     }
+    $rawLeaf = $seriesRawName
+    $extraB = @{}
+    if ($rawLeaf -ne $seriesName) { $extraB = Get-CombinedEpisodeTitleMap -SeriesName $rawLeaf -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb }
     $extraMerged = Merge-EpisodeTitleMaps -Primary $extraA -Fallback $extraB
     $allTitles2 = Merge-EpisodeTitleMaps -Primary $allTitles -Fallback $extraMerged
     Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles2
@@ -1305,6 +1398,10 @@ if (Test-Path -LiteralPath $ReferenceRootPath) {
 }
 if ($UseTmdb -and -not $script:TmdbEnabled) {
     Add-Record -Series '-' -Action 'tmdb' -Status 'WARN' -Details 'TMDB включен, но ключ отсутствует; работаем без TMDB.'
+}
+Import-SeriesAliases
+if ($VerifyOnly) {
+    Add-Record -Series '-' -Action 'verify-only' -Status 'INFO' -Details 'Режим VerifyOnly: только сбор/план/логи, без изменений на диске.'
 }
 
 $htmlTitles = Extract-EpisodeTitleFromHtml -HtmlPath $HtmlPath
@@ -1332,6 +1429,7 @@ $modeTag = if ($DryRun) { 'dryrun' } else { 'apply' }
 $csvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.csv")
 $txtPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
 $renamePath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-renames.txt")
+$renameCsvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-renames.csv")
 $script:Records | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
 Save-SeriesMetaCache
 
@@ -1362,21 +1460,31 @@ if ($renameRows.Count -eq 0) {
     }
 }
 Set-Content -LiteralPath $renamePath -Value @($renameLines) -Encoding UTF8
+$renameRows | Export-Csv -LiteralPath $renameCsvPath -NoTypeInformation -Encoding UTF8
 
 $warn = @($script:Records | Where-Object { $_.status -eq 'WARN' }).Count
 $err = @($script:Records | Where-Object { $_.status -eq 'ERROR' }).Count
+$renamedOk = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'OK' }).Count
+$renamedDry = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'DRYRUN' }).Count
+$skippedLowConfidence = @($script:Records | Where-Object { $_.action -eq 'skip-low-confidence' }).Count
 $summary = @(
     "Mode: $Mode",
     "RunMode: $(if ($DryRun) { 'DryRun' } else { 'Apply' })",
+    "VerifyOnly: $(if ($VerifyOnly) { 'true' } else { 'false' })",
     "ExecutionProfile: $(Get-ExecutionProfileResolved)",
+    "RenameMinConfidenceApply: $(Get-RenameMinConfidenceApply)",
     "RootPath: $RootPath",
     "SeriesPath: $SeriesPath",
     "TotalLogRecords: $($script:Records.Count)",
+    "RenamedOk: $renamedOk",
+    "RenamedDryRun: $renamedDry",
+    "SkippedLowConfidence: $skippedLowConfidence",
     "Warnings: $warn",
     "Errors: $err",
     "CSV: $csvPath",
     "TXT: $txtPath",
-    "RENAMES: $renamePath"
+    "RENAMES: $renamePath",
+    "RENAMES_CSV: $renameCsvPath"
 ) -join [Environment]::NewLine
 
 if ($script:SeriesStageDurations.Count -gt 0) {
