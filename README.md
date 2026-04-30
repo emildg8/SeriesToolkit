@@ -164,6 +164,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 - Ищите строки `[SeriesToolkit][Diag] ...` в `gui-progress`/`TXT` — там кратко видно, какой источник дал `ok/no-match/error/captcha`.
 - Если в файлах остались заглушки `Серия N`, проверьте `*-renames.txt` и `SeriesToolkit-episode-index.csv` в папке сериала: там видно, что найдено и что не удалось сопоставить.
 
+## Как читать review-queue
+
+`*-review-queue.csv` — это очередь ручной проверки спорных кейсов.
+
+- `review-required`: strict mode заблокировал рискованное переименование (обычно нет подтверждённого названия, иначе была бы заглушка).
+- `skip-low-confidence`: итоговый confidence ниже `rename_min_confidence_apply`.
+- `skip-file` (`WARN/ERROR`): файл не удалось надёжно распарсить или собрать корректную цель.
+
+Практический порядок разбора:
+
+1. Сначала `review-required` (самые важные, потенциально рискованные случаи).
+2. Затем `skip-low-confidence` (порог можно ослабить, если кейсы массовые и однотипные).
+3. В конце `skip-file` (`ERROR`) — обычно это нестандартные имена/структура.
+
+Рекомендуемые пороги `rename_min_confidence_apply`:
+
+- `85` — консервативно (для «боевого» Apply на незнакомой библиотеке).
+- `75` — сбалансировано (дефолт, обычно лучший старт).
+- `65` — агрессивнее (когда библиотека однотипная и вы готовы чаще смотреть review-queue).
+
 ## Обратная связь
 
 Репозиторий: [https://github.com/emildg8/SeriesToolkit](https://github.com/emildg8/SeriesToolkit)
