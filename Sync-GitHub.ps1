@@ -41,6 +41,19 @@ function Invoke-GhOrThrow {
     }
 }
 
+function Test-GhReleaseExists {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Repo
+    )
+    try {
+        & $gh release view $Tag -R $Repo 1>$null 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
 $allowedFiles = @(
     'Build-SeriesToolkitExe.ps1',
     'Bump-Version.ps1',
@@ -151,8 +164,7 @@ if ($version -match '^\d+\.\d+\.\d+$') {
 - README/CHANGELOG/version.json текущей версии;
 - zip-архив для быстрого тестирования и отката.
 "@
-    & $gh release view $tag -R $GitHubRepo 1>$null 2>$null
-    $releaseExists = ($LASTEXITCODE -eq 0)
+    $releaseExists = Test-GhReleaseExists -Tag $tag -Repo $GitHubRepo
     if ($releaseExists) {
         Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
     } else {
