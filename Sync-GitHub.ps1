@@ -151,8 +151,9 @@ if ($version -match '^\d+\.\d+\.\d+$') {
 - README/CHANGELOG/version.json текущей версии;
 - zip-архив для быстрого тестирования и отката.
 "@
-    & $gh release view $tag -R $GitHubRepo *> $null
-    if ($LASTEXITCODE -eq 0) {
+    & $gh release view $tag -R $GitHubRepo 1>$null 2>$null
+    $releaseExists = ($LASTEXITCODE -eq 0)
+    if ($releaseExists) {
         Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
     } else {
         Invoke-GhOrThrow -Arguments @('release', 'create', $tag, $zip, '-R', $GitHubRepo, '--title', "SeriesToolkit $version", '--notes', $body) -ErrorContext "Не удалось создать release $tag"
