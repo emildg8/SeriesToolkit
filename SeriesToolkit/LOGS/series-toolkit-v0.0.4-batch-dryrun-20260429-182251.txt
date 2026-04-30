@@ -1,0 +1,9 @@
+﻿Mode: Batch
+RunMode: DryRun
+RootPath: D:/Dev/Script_Rename_ALLVideo/SeriesToolkit
+SeriesPath: 
+TotalLogRecords: 1
+Warnings: 0
+Errors: 0
+CSV: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.0.4-batch-dryrun-20260429-182251.csv
+TXT: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.0.4-batch-dryrun-20260429-182251.txt

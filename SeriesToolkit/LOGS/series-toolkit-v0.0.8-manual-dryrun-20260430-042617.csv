@@ -1,0 +1,8 @@
+﻿"time","series","action","status","source_path","target_path","details"
+"2026-04-30 04:26:02","-","reference-scan","INFO","\\Emilian_TNAS\emildg8\Video\Сериалы","","Папка-референс доступна."
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","create-season-folder","DRYRUN","","D:\Dev\Script_Rename_ALLVideo\Сезон 1",""
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","move-rename-file","DRYRUN","D:\Dev\Script_Rename_ALLVideo\Пример 1 использования скрипта с помощью HTML с Википедии.mp4","D:\Dev\Script_Rename_ALLVideo\Сезон 1\Script_Rename_ALLVideo - S01E01 - Серия 1.mp4","pattern=GenericEpisodeNumber; confidence=70"
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","move-rename-file","DRYRUN","D:\Dev\Script_Rename_ALLVideo\Пример 1 использования скрипта с помощью HTML с Кинопоиска.mp4","D:\Dev\Script_Rename_ALLVideo\Сезон 1\Script_Rename_ALLVideo - S01E01 - Серия 1 [1].mp4","pattern=GenericEpisodeNumber; confidence=70"
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","move-rename-file","DRYRUN","D:\Dev\Script_Rename_ALLVideo\Пример 2 использования скрипта с помощью HTML с Википедии.mp4","D:\Dev\Script_Rename_ALLVideo\Сезон 1\Script_Rename_ALLVideo - S01E02 - Серия 2.mp4","pattern=GenericEpisodeNumber; confidence=70"
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","move-rename-file","DRYRUN","D:\Dev\Script_Rename_ALLVideo\Пример 2 использования скрипта с помощью HTML с Кинопоиска.mp4","D:\Dev\Script_Rename_ALLVideo\Сезон 1\Script_Rename_ALLVideo - S01E02 - Серия 2 [1].mp4","pattern=GenericEpisodeNumber; confidence=70"
+"2026-04-30 04:26:17","Script_Rename_ALLVideo","remove-empty-folder","DRYRUN","D:\Dev\Script_Rename_ALLVideo\Archive","",""

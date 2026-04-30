@@ -31,15 +31,91 @@ function Get-UrlText([string]$Uri) {
 # Kinopoisk/Yandex often block non-browser user-agents; use a Chrome-like UA for episode pages only.
 $script:KinopoiskBrowserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
-function Get-KinopoiskUrlText([string]$Uri) {
-    Initialize-WebClient
-    $headers = @{
-        'User-Agent'      = $script:KinopoiskBrowserUserAgent
-        'Accept'          = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-        'Accept-Language' = 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+function Get-KinopoiskCookieHeaderFromEnvironment {
+    foreach ($name in @('KINOPOISK_COOKIE', 'SERIESTOOLKIT_KINOPOISK_COOKIE')) {
+        foreach ($scope in @('Process', 'User', 'Machine')) {
+            $v = [Environment]::GetEnvironmentVariable($name, $scope)
+            if (-not [string]::IsNullOrWhiteSpace($v)) { return $v.Trim() }
+        }
     }
-    $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers $headers -MaximumRedirection 5 -TimeoutSec 90
-    return $r.Content
+    return $null
+}
+
+function Test-SeriesToolkitUseCurlForKinopoisk {
+    $v = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_KP_USE_CURL', 'User')
+    if ($v -eq '0' -or $v -eq 'false') { return $false }
+    $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+    return (Test-Path -LiteralPath $curl)
+}
+
+function Invoke-KinopoiskHttpGet([string]$Uri) {
+    if ([string]::IsNullOrWhiteSpace($Uri)) { return $null }
+    Initialize-WebClient
+    $dEnv = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_KP_DELAY_MS', 'User')
+    $delayParsed = -1
+    if ([int]::TryParse($dEnv, [ref]$delayParsed) -and $delayParsed -ge 0) {
+        Start-Sleep -Milliseconds ([Math]::Min($delayParsed, 8000))
+    } else {
+        Start-Sleep -Milliseconds (Get-Random -Minimum 80 -Maximum 380)
+    }
+
+    $cookie = Get-KinopoiskCookieHeaderFromEnvironment
+    $curlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
+    if ((Test-SeriesToolkitUseCurlForKinopoisk) -and (Test-Path -LiteralPath $curlExe)) {
+        $curlArgs = @(
+            '-sSL', '--compressed', '--max-redirs', '12', '-m', '90',
+            '-A', $script:KinopoiskBrowserUserAgent,
+            '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            '-H', 'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            '-e', 'https://www.kinopoisk.ru/',
+            '-H', 'Referer: https://www.kinopoisk.ru/',
+            '-H', 'Sec-Fetch-Dest: document',
+            '-H', 'Sec-Fetch-Mode: navigate',
+            '-H', 'Upgrade-Insecure-Requests: 1'
+        )
+        if (-not [string]::IsNullOrWhiteSpace($cookie)) {
+            $curlArgs += @('-b', $cookie)
+        }
+        $curlArgs += $Uri
+        for ($ci = 1; $ci -le 2; $ci++) {
+            try {
+                $out = & $curlExe @curlArgs 2>$null
+                if ($out -and ([string]$out).Length -gt 400) { return [string]$out }
+            } catch { }
+            Start-Sleep -Milliseconds (400 * $ci)
+        }
+    }
+
+    $headers = @{
+        'User-Agent'                = $script:KinopoiskBrowserUserAgent
+        'Accept'                    = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        'Accept-Language'           = 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+        'Referer'                   = 'https://www.kinopoisk.ru/'
+        'Sec-Fetch-Dest'            = 'document'
+        'Sec-Fetch-Mode'            = 'navigate'
+        'Sec-Fetch-Site'            = 'same-origin'
+        'Upgrade-Insecure-Requests' = '1'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($cookie)) {
+        $headers['Cookie'] = $cookie
+    }
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers $headers -MaximumRedirection 12 -TimeoutSec 90
+            if ($r -and $r.Content) { return $r.Content }
+        } catch {
+            Start-Sleep -Milliseconds (450 * $attempt)
+        }
+    }
+    return $null
+}
+
+function Get-KinopoiskUrlText([string]$Uri) {
+    $html = Invoke-KinopoiskHttpGet $Uri
+    if ($null -eq $html) {
+        throw "Kinopoisk: пустой ответ для $Uri"
+    }
+    return $html
 }
 
 function Test-KinopoiskHtmlLooksLikeCaptchaPage([string]$html) {
@@ -115,6 +191,125 @@ function Get-KinopoiskFilmIdFromUrl([string]$Url) {
         return $Matches[1]
     }
     return $null
+}
+
+function Normalize-KinopoiskOgTitle([string]$Raw) {
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return '' }
+    $t = $Raw.Trim()
+    $t = $t -replace '\s+—\s*смотреть.*$', '' -replace '\s+—\s*Кинопоиск.*$', '' -replace '\s+-\s*смотреть.*$', ''
+    $t = $t -replace '\s*\(\s*сериал[^)]*\)', '' -replace '\s*\(\s*мини-сериал[^)]*\)', ''
+    $t = $t -replace '\s+', ' '
+    return $t.Trim()
+}
+
+function Get-KinopoiskDisplayTitleFromMainHtml([string]$Html) {
+    if ([string]::IsNullOrWhiteSpace($Html)) { return $null }
+    if ($Html -match '(?is)property="og:title"\s+content="([^"]+)"') {
+        $x = Normalize-KinopoiskOgTitle $Matches[1]
+        if (-not [string]::IsNullOrWhiteSpace($x)) { return $x }
+    }
+    $nd = Get-NextDataJsonText $Html
+    if (-not [string]::IsNullOrWhiteSpace($nd)) {
+        try {
+            $j = $nd | ConvertFrom-Json
+            if ($j.props.pageProps.filmBrief.name) {
+                $x = Normalize-KinopoiskOgTitle ([string]$j.props.pageProps.filmBrief.name)
+                if (-not [string]::IsNullOrWhiteSpace($x)) { return $x }
+            }
+        } catch { }
+    }
+    return $null
+}
+
+function Get-KpTitleMatchScore([string]$Expected, [string]$Candidate) {
+    if ([string]::IsNullOrWhiteSpace($Expected) -or [string]::IsNullOrWhiteSpace($Candidate)) { return 0 }
+    $norm = {
+        param([string]$s)
+        $t = $s.ToLowerInvariant() -replace '[^\p{L}\p{Nd}\s]', ' ' -replace '\s+', ' '
+        return $t.Trim()
+    }
+    $e = & $norm $Expected
+    $c = & $norm $Candidate
+    if ([string]::IsNullOrWhiteSpace($e) -or [string]::IsNullOrWhiteSpace($c)) { return 0 }
+    if ($c -eq $e) { return 1000 }
+    if ($c.Contains($e) -or $e.Contains($c)) { return 450 }
+    $sc = 0
+    foreach ($w in ($e -split '\s+')) {
+        if ($w.Length -lt 2) { continue }
+        if ($c.Contains($w)) { $sc += 55 }
+    }
+    return $sc
+}
+
+function Get-KinopoiskFilmIdFromSearchRedirect([string]$Query) {
+    if ([string]::IsNullOrWhiteSpace($Query)) { return $null }
+    $enc = [uri]::EscapeDataString($Query.Trim())
+    $url = "https://www.kinopoisk.ru/index.php?kp_query=$enc"
+    try {
+        $curlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
+        if ((Test-SeriesToolkitUseCurlForKinopoisk) -and (Test-Path -LiteralPath $curlExe)) {
+            $cookie = Get-KinopoiskCookieHeaderFromEnvironment
+            $curlArgs = @(
+                '-sSIL', '--compressed', '--max-redirs', '16', '-m', '90',
+                '-A', $script:KinopoiskBrowserUserAgent,
+                '-H', 'Accept-Language: ru-RU,ru;q=0.9',
+                '-e', 'https://www.kinopoisk.ru/',
+                '-H', 'Referer: https://www.kinopoisk.ru/'
+            )
+            if (-not [string]::IsNullOrWhiteSpace($cookie)) { $curlArgs += @('-b', $cookie) }
+            $curlArgs += $url
+            $last = & $curlExe @curlArgs 2>$null
+            if ($last) {
+                foreach ($line in ($last -split "`n")) {
+                    if ($line -match '(?i)^location:\s*(.+)$') {
+                        $loc = $Matches[1].Trim()
+                        $id = Get-KinopoiskFilmIdFromUrl $loc
+                        if ($id) { return $id }
+                    }
+                }
+            }
+        }
+        $headers = @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept'          = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            'Accept-Language' = 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+            'Referer'         = 'https://www.kinopoisk.ru/'
+        }
+        if (-not [string]::IsNullOrWhiteSpace((Get-KinopoiskCookieHeaderFromEnvironment))) {
+            $headers['Cookie'] = Get-KinopoiskCookieHeaderFromEnvironment
+        }
+        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers $headers -MaximumRedirection 16 -TimeoutSec 90
+        $final = $r.BaseResponse.ResponseUri.AbsoluteUri
+        return Get-KinopoiskFilmIdFromUrl $final
+    } catch {
+        return $null
+    }
+}
+
+function Get-EpisodesFromKinopoiskVerifiedForSeries(
+    [string]$FolderTitle,
+    [string]$TmdbRuName,
+    [string]$TmdbOriginalName,
+    [int]$MinMatchScore = 120
+) {
+    if ([string]::IsNullOrWhiteSpace($FolderTitle)) { return $null }
+    $id = Get-KinopoiskFilmIdFromSearchRedirect $FolderTitle
+    if (-not $id) { return $null }
+    $mainUrl = "https://www.kinopoisk.ru/film/$id/"
+    try {
+        $html = Get-KinopoiskUrlText $mainUrl
+    } catch {
+        return $null
+    }
+    if (Test-KinopoiskHtmlLooksLikeCaptchaPage $html) { return $null }
+    $disp = Get-KinopoiskDisplayTitleFromMainHtml $html
+    if ([string]::IsNullOrWhiteSpace($disp)) { return $null }
+    $s1 = Get-KpTitleMatchScore $FolderTitle $disp
+    $s2 = if (-not [string]::IsNullOrWhiteSpace($TmdbRuName)) { Get-KpTitleMatchScore $TmdbRuName $disp } else { 0 }
+    $s3 = if (-not [string]::IsNullOrWhiteSpace($TmdbOriginalName)) { Get-KpTitleMatchScore $TmdbOriginalName $disp } else { 0 }
+    $mx = [Math]::Max([Math]::Max($s1, $s2), $s3)
+    if ($mx -lt $MinMatchScore) { return $null }
+    return Get-EpisodesFromKinopoiskEpisodesPage $id
 }
 
 function Format-RussianEpisodeTitleFromWikipedia([string]$text) {
@@ -990,6 +1185,134 @@ function Get-EpisodesFromKinopoiskEpisodesPage([string]$FilmId) {
     return $null
 }
 
+function Get-TmdbApiKeyFromEnvironment {
+    foreach ($name in @('TMDB_API_KEY', 'RENAME_VIDEO_TMDB_API_KEY', 'THEMOVIEDB_API_KEY')) {
+        $k = [Environment]::GetEnvironmentVariable($name, 'User')
+        if (-not [string]::IsNullOrWhiteSpace($k)) { return $k.Trim() }
+        $k = [Environment]::GetEnvironmentVariable($name, 'Machine')
+        if (-not [string]::IsNullOrWhiteSpace($k)) { return $k.Trim() }
+        $k = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if (-not [string]::IsNullOrWhiteSpace($k)) { return $k.Trim() }
+    }
+    return $null
+}
+
+function Get-TmdbTvIdFromUrlOrString([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $t = $Text.Trim()
+    if ($t -match '(?i)^tmdb:(\d+)\s*$') { return [int]$Matches[1] }
+    if ($t -match '(?i)themoviedb\.org/tv/(\d+)') { return [int]$Matches[1] }
+    return $null
+}
+
+# Поиск сериала по строке (для автозаполнения tmdb_tv_id из имени папки). Возвращает массив объектов API (id, name, original_name, popularity, first_air_date).
+function Search-TmdbTvSeries([string]$Query, [string]$ApiKey, [string]$Language = 'ru-RU') {
+    if ([string]::IsNullOrWhiteSpace($Query) -or [string]::IsNullOrWhiteSpace($ApiKey)) { return @() }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $qEnc = [uri]::EscapeDataString($Query.Trim())
+    $langEnc = [uri]::EscapeDataString($Language)
+    $uri = "https://api.themoviedb.org/3/search/tv?api_key=$keyEnc&language=$langEnc&query=$qEnc"
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 60
+    } catch {
+        return @()
+    }
+    if (-not $resp -or -not $resp.results) { return @() }
+    return @($resp.results)
+}
+
+function Get-EpisodesFromTmdbTvSeries([int]$TvId, [string]$ApiKey) {
+    if ($TvId -le 0) { return $null }
+    if ([string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $base = "https://api.themoviedb.org/3/tv/$TvId"
+    try {
+        $tvUri = "$base`?api_key=$keyEnc&language=ru-RU"
+        $tv = Invoke-RestMethod -Uri $tvUri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 90
+        if (-not $tv) { return $null }
+    } catch {
+        return $null
+    }
+    $list = [System.Collections.Generic.List[object]]::new()
+    $maxSn = 0
+    if ($null -ne $tv.number_of_seasons) { $maxSn = [int]$tv.number_of_seasons }
+    if ($maxSn -le 0 -and $tv.seasons) {
+        foreach ($s in @($tv.seasons)) {
+            if ($null -ne $s.season_number -and [int]$s.season_number -gt $maxSn) { $maxSn = [int]$s.season_number }
+        }
+    }
+    for ($sn = 1; $sn -le $maxSn; $sn++) {
+        try {
+            $su = "https://api.themoviedb.org/3/tv/$TvId/season/$sn`?api_key=$keyEnc&language=ru-RU"
+            $se = Invoke-RestMethod -Uri $su -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 90
+            if (-not $se -or -not $se.episodes) { continue }
+            foreach ($ep in @($se.episodes)) {
+                $en = [int]$ep.episode_number
+                if ($en -le 0) { continue }
+                $ti = [string]$ep.name
+                if ([string]::IsNullOrWhiteSpace($ti)) { $ti = "Episode $en" }
+                $list.Add([pscustomobject]@{ season = $sn; episode = $en; title = $ti.Trim() })
+            }
+        } catch {
+            continue
+        }
+    }
+    if ($list.Count -eq 0) { return $null }
+    return @($list)
+}
+
+function Get-EpisodeListFromSeriesMetaJson([string]$JsonPath, [string]$TmdbApiKey) {
+    $JsonPath = ConvertTo-DotNetFileSystemPath $JsonPath
+    if (-not (Test-Path -LiteralPath $JsonPath)) { return $null }
+    $raw = $null
+    try {
+        $raw = Get-Content -LiteralPath $JsonPath -Raw -Encoding UTF8
+    } catch {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $meta = $null
+    try {
+        $meta = $raw | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+    $tvId = $null
+    if ($null -ne $meta.tmdb_tv_id) { $tvId = [int]$meta.tmdb_tv_id }
+    elseif ($null -ne $meta.tmdb_id) { $tvId = [int]$meta.tmdb_id }
+    if (-not $tvId -or $tvId -le 0) { return $null }
+    $key = $TmdbApiKey
+    if ([string]::IsNullOrWhiteSpace($key)) { $key = Get-TmdbApiKeyFromEnvironment }
+    if ([string]::IsNullOrWhiteSpace($key)) { return $null }
+    $items = Get-EpisodesFromTmdbTvSeries $tvId $key
+    if (-not $items -or @($items).Count -eq 0) { return $null }
+    $wikiQuery = $null
+    if ($null -ne $meta.wikipedia_ru_query -and -not [string]::IsNullOrWhiteSpace([string]$meta.wikipedia_ru_query)) {
+        $wikiQuery = [string]$meta.wikipedia_ru_query
+    }
+    elseif ($null -ne $meta.wikipedia_ru -and -not [string]::IsNullOrWhiteSpace([string]$meta.wikipedia_ru)) {
+        $wikiQuery = [string]$meta.wikipedia_ru
+    }
+    if (-not [string]::IsNullOrWhiteSpace($wikiQuery)) {
+        $wikiRu = Get-EpisodesFromWikipediaSearchQueries $wikiQuery
+        if ($wikiRu -and @($wikiRu).Count -gt 0) {
+            $items = Merge-EpisodeTitlesPreferRu @($items) @($wikiRu)
+        }
+    }
+    else {
+        $folderHint = $null
+        if ($null -ne $meta.series_title_ru -and -not [string]::IsNullOrWhiteSpace([string]$meta.series_title_ru)) {
+            $folderHint = [string]$meta.series_title_ru
+        }
+        if (-not [string]::IsNullOrWhiteSpace($folderHint)) {
+            $items = Expand-EpisodeListWithRussianWikipedia @($items) $folderHint
+        }
+    }
+    return @($items)
+}
+
 function Get-EpisodesFromTvMaze([string]$Query) {
     if ([string]::IsNullOrWhiteSpace($Query)) { return $null }
     try {
@@ -1009,6 +1332,62 @@ function Get-EpisodesFromTvMaze([string]$Query) {
         }
         if ($list.Count -gt 0) { return $list }
     } catch { }
+    return $null
+}
+
+function Search-DuckDuckGoHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return @() }
+    Initialize-WebClient
+    $enc = [uri]::EscapeDataString($SearchQuery.Trim())
+    try {
+        $r = Invoke-WebRequest -Uri 'https://html.duckduckgo.com/html/' -Method Post -Body "q=$enc" `
+            -ContentType 'application/x-www-form-urlencoded; charset=UTF-8' -UseBasicParsing -Headers @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept-Language' = 'ru-RU,ru;q=0.9'
+        } -TimeoutSec 55
+    } catch { return @() }
+    if (-not $r -or [string]::IsNullOrWhiteSpace($r.Content)) { return @() }
+    $html = $r.Content
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in [regex]::Matches($html, 'uddg=([^&"''<]+)')) {
+        try {
+            $decoded = [uri]::UnescapeDataString($m.Groups[1].Value)
+            if ($decoded -match '(?i)ru\.wikipedia\.org/wiki/') {
+                $clean = ($decoded -split '\?')[0]
+                if ($clean.Length -gt 24) { [void]$found.Add($clean) }
+            }
+        } catch { }
+    }
+    foreach ($m in [regex]::Matches($html, 'https?://ru\.wikipedia\.org/wiki/[^\s"''<>]+')) {
+        [void]$found.Add((($m.Value -split '\?')[0]))
+    }
+    return @(@($found) | Select-Object -First $Max)
+}
+
+function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [string]$Base, [string]$Tail) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($Tail)) {
+        [void]$queries.Add("site:ru.wikipedia.org список эпизодов $Tail")
+        [void]$queries.Add("site:ru.wikipedia.org $Tail эпизоды сериала")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Base)) {
+        [void]$queries.Add("site:ru.wikipedia.org список эпизодов $Base")
+        [void]$queries.Add("site:ru.wikipedia.org $Base телесериал эпизоды")
+    }
+    [void]$queries.Add("site:ru.wikipedia.org список эпизодов $SearchQuery")
+    $seenTitle = @{}
+    foreach ($dq in ($queries | Select-Object -Unique)) {
+        foreach ($pageUrl in (Search-DuckDuckGoHtmlForWikipediaUrls $dq)) {
+            $t = Get-WikipediaPageTitleFromUrl $pageUrl
+            if ([string]::IsNullOrWhiteSpace($t)) { continue }
+            if ($seenTitle.ContainsKey($t)) { continue }
+            $seenTitle[$t] = $true
+            $r = Get-EpisodesFromWikipediaPageTitleOrLinked $t
+            if ($r -and @($r).Count -gt 0) { return $r }
+        }
+        Start-Sleep -Milliseconds (320 + (Get-Random -Maximum 280))
+    }
     return $null
 }
 
@@ -1079,6 +1458,10 @@ function Get-EpisodesFromWikipediaSearchQueries([string]$SearchQuery) {
         $r = Get-EpisodesFromWikipediaPageTitleOrLinked $st
         if ($r) { return $r }
     }
+    try {
+        $rDd = Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch -SearchQuery $SearchQuery.Trim() -Base $base -Tail $tail
+        if ($rDd) { return $rDd }
+    } catch { }
     return $null
 }
 
@@ -1121,6 +1504,16 @@ function Save-EpisodeListToCsv([object[]]$Items, [string]$CsvPath) {
     Set-Content -LiteralPath $CsvPath -Value $lines -Encoding utf8
 }
 
+function Export-CsvUtf8BomEpisodeList([object[]]$Objects, [string]$LiteralPath) {
+    $LiteralPath = ConvertTo-DotNetFileSystemPath $LiteralPath
+    if (-not $Objects -or @($Objects).Count -eq 0) {
+        Set-Content -LiteralPath $LiteralPath -Value '' -Encoding utf8
+        return
+    }
+    $lines = @($Objects | ConvertTo-Csv -NoTypeInformation)
+    Set-Content -LiteralPath $LiteralPath -Value $lines -Encoding utf8
+}
+
 function Try-ResolveEpisodeList {
     param(
         [string]$SourceUrl,
@@ -1130,6 +1523,14 @@ function Try-ResolveEpisodeList {
 
     if ($SourceUrl) {
         $u = $SourceUrl.Trim()
+        $tmdbId = Get-TmdbTvIdFromUrlOrString $u
+        if ($tmdbId) {
+            $apiKey = Get-TmdbApiKeyFromEnvironment
+            if ($apiKey) {
+                $r = Get-EpisodesFromTmdbTvSeries $tmdbId $apiKey
+                if ($r) { return $r }
+            }
+        }
         if ($u -match '\.(html?|htm)\s*$' -and (Test-Path -LiteralPath $u)) {
             $r = Get-EpisodesFromKinopoiskSavedHtmlFile $u
             if ($r) { return $r }

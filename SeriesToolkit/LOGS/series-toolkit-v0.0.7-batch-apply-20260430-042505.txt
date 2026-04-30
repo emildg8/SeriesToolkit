@@ -1,0 +1,9 @@
+﻿Mode: Batch
+RunMode: Apply
+RootPath: \\Emilian_TNAS\emildg8\Video\Мультсериалы
+SeriesPath: 
+TotalLogRecords: 4007
+Warnings: 669
+Errors: 0
+CSV: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.0.7-batch-apply-20260430-042505.csv
+TXT: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.0.7-batch-apply-20260430-042505.txt

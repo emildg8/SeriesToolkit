@@ -1,0 +1,9 @@
+﻿Mode: Manual
+RunMode: DryRun
+RootPath: \\Emilian_TNAS\emildg8\Video\Мультсериалы
+SeriesPath: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit
+TotalLogRecords: 1
+Warnings: 0
+Errors: 0
+CSV: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.1.0-manual-dryrun-20260430-044419.csv
+TXT: D:\Dev\Script_Rename_ALLVideo\SeriesToolkit\LOGS\series-toolkit-v0.1.0-manual-dryrun-20260430-044419.txt
