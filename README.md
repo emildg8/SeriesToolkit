@@ -149,6 +149,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 
 Каталог `LOGS`: CSV по операциям, краткий TXT и отдельный `*-renames.txt` с явным `FROM -> TO` по переименованиям.
 Также формируется `*-renames.csv` для фильтрации/аналитики в Excel/BI.
+Для ручного разбора спорных кейсов формируется `*-review-queue.csv` (low-confidence, review-required, проблемные skip).
 В итоговом TXT добавлены throughput-метрики: `ProcessedSeries`, `SeriesPerMinute`, `AvgMetaFirstPassMs`.
 
 ## Если метаданные не нашлись
@@ -157,6 +158,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 - Убедитесь, что корректно задан `tmdb_api_key` в `SeriesToolkit.settings.json`; без ключа TMDB отключается и используются fallback-источники.
 - Для Кинопоиска обновите `kinopoisk_cookie` (если устарел сеанс, растёт шанс капчи/пустых ответов).
 - Увеличьте `metadata_request_timeout_sec` (например, до `90`) при медленном интернете.
+- Включайте `strict_mode=true` для безопасного режима: toolkit не будет делать рискованные переименования с заглушками, а отправит их в review-очередь.
 - Подключите алиасы в `series-aliases.json` (шаблон: `series-aliases.example.json`) для сложных/франшизных названий.
 - Для повторной проверки проблемного сериала запустите `Manual + DryRun`, чтобы быстро увидеть причины в `LOGS/gui-progress-*.log`.
 - Ищите строки `[SeriesToolkit][Diag] ...` в `gui-progress`/`TXT` — там кратко видно, какой источник дал `ok/no-match/error/captcha`.

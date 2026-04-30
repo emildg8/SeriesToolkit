@@ -12,6 +12,7 @@
   "metadata_web_search_engines": ["ddg", "yandex", "google"],
   "batch_max_parallel": 1,
   "rename_min_confidence_apply": 75,
+  "strict_mode": true,
   "series_aliases_file": "series-aliases.json",
   "metadata_enable_stage_timing": true,
   "metadata_slow_series_top_n": 10,

@@ -73,6 +73,7 @@ $script:UserSettings = @{
     metadata_web_search_engines = @('ddg', 'yandex', 'google')
     batch_max_parallel = 1
     rename_min_confidence_apply = 75
+    strict_mode = $true
     series_aliases_file = 'series-aliases.json'
     metadata_enable_stage_timing = $true
     metadata_slow_series_top_n = 10
@@ -139,6 +140,9 @@ function Import-SeriesToolkitUserSettings {
         }
         if ($key -contains 'rename_min_confidence_apply' -and $null -ne $j.rename_min_confidence_apply) {
             $script:UserSettings.rename_min_confidence_apply = [int]$j.rename_min_confidence_apply
+        }
+        if ($key -contains 'strict_mode' -and $null -ne $j.strict_mode) {
+            $script:UserSettings.strict_mode = [bool]$j.strict_mode
         }
         if ($key -contains 'series_aliases_file' -and $j.series_aliases_file) {
             $script:UserSettings.series_aliases_file = [string]$j.series_aliases_file
@@ -370,6 +374,10 @@ function Get-BatchMaxParallel {
     if ($v -lt 1) { $v = 1 }
     if ($v -gt 4) { $v = 4 }
     return $v
+}
+
+function Test-StrictModeEnabled {
+    return [bool]$script:UserSettings.strict_mode
 }
 
 function Resolve-SeriesAliasesFilePath {
@@ -1127,6 +1135,7 @@ function Add-WarningsForRemainingPlaceholders([System.IO.DirectoryInfo]$SeriesDi
 function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$EpisodeTitlesMap) {
     $plan = [System.Collections.Generic.List[object]]::new()
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
+    $strictMode = Test-StrictModeEnabled
     $files = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Extension -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$' })
     foreach ($f in $files) {
@@ -1162,11 +1171,42 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
         $seasonPath = Join-Path $SeriesDir.FullName (Get-SeasonFolderName $tag.Season)
         $code = ('S{0:00}E{1:00}' -f $tag.Season, $tag.Episode)
         $title = $null
+        $titleSource = 'none'
+        $titleScore = 0
         $hKey = "$($tag.Season)|$($tag.Episode)"
-        if ($EpisodeTitlesMap.ContainsKey($hKey)) { $title = $EpisodeTitlesMap[$hKey] }
-        if ([string]::IsNullOrWhiteSpace($title)) { $title = Invoke-TmdbEpisodeNameLookup -SeriesName $seriesName -Season $tag.Season -Episode $tag.Episode }
-        if ($title -and $title -notmatch '\p{IsCyrillic}') { $title = $null }
-        if ([string]::IsNullOrWhiteSpace($title)) { $title = "Серия $($tag.Episode)" }
+        if ($EpisodeTitlesMap.ContainsKey($hKey)) {
+            $title = $EpisodeTitlesMap[$hKey]
+            $titleSource = 'merged_sources'
+            $titleScore = 95
+        }
+        if ([string]::IsNullOrWhiteSpace($title)) {
+            $title = Invoke-TmdbEpisodeNameLookup -SeriesName $seriesName -Season $tag.Season -Episode $tag.Episode
+            if (-not [string]::IsNullOrWhiteSpace($title)) {
+                $titleSource = 'tmdb_lookup'
+                $titleScore = 85
+            }
+        }
+        if ($title -and $title -notmatch '\p{IsCyrillic}') {
+            $title = $null
+            $titleSource = 'rejected_non_cyrillic'
+            $titleScore = 25
+        }
+        $usedPlaceholder = $false
+        if ([string]::IsNullOrWhiteSpace($title)) {
+            $title = "Серия $($tag.Episode)"
+            $titleSource = 'placeholder'
+            $titleScore = 20
+            $usedPlaceholder = $true
+        }
+        $patternScore = [int]$tag.Score
+        $finalConfidence = [int][Math]::Round(($patternScore * 0.65) + ($titleScore * 0.35))
+        if ($finalConfidence -lt 0) { $finalConfidence = 0 }
+        if ($finalConfidence -gt 100) { $finalConfidence = 100 }
+        $confidenceDetails = "pattern={0}; title_source={1}; title_score={2}; strict_mode={3}; final={4}" -f $patternScore, $titleSource, $titleScore, ($strictMode.ToString().ToLowerInvariant()), $finalConfidence
+        if ($strictMode -and $usedPlaceholder) {
+            Add-Record -Series $SeriesDir.Name -Action 'review-required' -Status 'WARN' -SourcePath $f.FullName -TargetPath '' -Details ("Нет подтверждённого названия. {0}; code={1}" -f $confidenceDetails, $code)
+            continue
+        }
         $newBase = Format-EpisodeFileBase -SeriesFolderName $SeriesDir.Name -Code $code -Title $title -Season $tag.Season -Episode $tag.Episode
         if ([string]::IsNullOrWhiteSpace($newBase)) {
             Add-Record -Series $SeriesDir.Name -Action 'skip-file' -Status 'ERROR' -SourcePath $f.FullName -Details 'Пустое целевое имя после sanitize.'
@@ -1179,7 +1219,8 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
                 seasonPath  = $seasonPath
                 target      = $target
                 pattern     = $tag.Pattern
-                confidence  = $tag.Score
+                confidence  = $finalConfidence
+                confidence_details = $confidenceDetails
             })
     }
     return $plan
@@ -1249,19 +1290,20 @@ function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
             continue
         }
         $opConfidence = if ($null -ne $op.confidence) { [int]$op.confidence } else { 0 }
+        $opConfidenceDetails = if ($null -ne $op.confidence_details) { [string]$op.confidence_details } else { '' }
         if ($opConfidence -lt $minConfidenceApply) {
-            Add-Record -Series $op.series -Action 'skip-low-confidence' -Status 'WARN' -SourcePath $op.source -TargetPath $op.target -Details ("confidence={0} < threshold={1}; pattern={2}" -f $opConfidence, $minConfidenceApply, $op.pattern)
+            Add-Record -Series $op.series -Action 'skip-low-confidence' -Status 'WARN' -SourcePath $op.source -TargetPath $op.target -Details ("confidence={0} < threshold={1}; pattern={2}; {3}" -f $opConfidence, $minConfidenceApply, $op.pattern, $opConfidenceDetails)
             Write-ToolkitProgress ("[SeriesToolkit][Rename][SKIP-LOW-CONFIDENCE] {0} -> {1} :: confidence={2} threshold={3}" -f $op.source, $op.target, $opConfidence, $minConfidenceApply)
             continue
         }
         if ($DryRun) {
-            Add-Record -Series $op.series -Action 'move-rename-file' -Status 'DRYRUN' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}" -f $op.pattern, $op.confidence)
+            Add-Record -Series $op.series -Action 'move-rename-file' -Status 'DRYRUN' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}; {2}" -f $op.pattern, $op.confidence, $opConfidenceDetails)
             Write-ToolkitProgress ("[SeriesToolkit][Rename][DRYRUN] {0} -> {1}" -f $op.source, $op.target)
             continue
         }
         try {
             Move-Item -LiteralPath $op.source -Destination $op.target -Force
-            Add-Record -Series $op.series -Action 'move-rename-file' -Status 'OK' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}" -f $op.pattern, $op.confidence)
+            Add-Record -Series $op.series -Action 'move-rename-file' -Status 'OK' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}; {2}" -f $op.pattern, $op.confidence, $opConfidenceDetails)
             Write-ToolkitProgress ("[SeriesToolkit][Rename][OK] {0} -> {1}" -f $op.source, $op.target)
         } catch {
             Add-Record -Series $op.series -Action 'move-rename-file' -Status 'ERROR' -SourcePath $op.source -TargetPath $op.target -Details $_.Exception.Message
@@ -1583,6 +1625,7 @@ $csvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$
 $txtPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
 $renamePath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-renames.txt")
 $renameCsvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-renames.csv")
+$reviewCsvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-review-queue.csv")
 $script:Records | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
 Save-SeriesMetaCache
 
@@ -1614,12 +1657,22 @@ if ($renameRows.Count -eq 0) {
 }
 Set-Content -LiteralPath $renamePath -Value @($renameLines) -Encoding UTF8
 $renameRows | Export-Csv -LiteralPath $renameCsvPath -NoTypeInformation -Encoding UTF8
+$reviewRows = @(
+    $script:Records |
+        Where-Object {
+            $_.action -in @('skip-low-confidence', 'review-required') -or
+            ($_.action -eq 'skip-file' -and $_.status -in @('WARN', 'ERROR'))
+        } |
+        Select-Object time, series, action, status, source_path, target_path, details
+)
+$reviewRows | Export-Csv -LiteralPath $reviewCsvPath -NoTypeInformation -Encoding UTF8
 
 $warn = @($script:Records | Where-Object { $_.status -eq 'WARN' }).Count
 $err = @($script:Records | Where-Object { $_.status -eq 'ERROR' }).Count
 $renamedOk = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'OK' }).Count
 $renamedDry = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'DRYRUN' }).Count
 $skippedLowConfidence = @($script:Records | Where-Object { $_.action -eq 'skip-low-confidence' }).Count
+$reviewQueueCount = $reviewRows.Count
 $processedSeries = @(
     $script:Records |
         Where-Object { $_.series -and $_.series -ne '-' } |
@@ -1644,6 +1697,7 @@ $summary = @(
     "RenamedOk: $renamedOk",
     "RenamedDryRun: $renamedDry",
     "SkippedLowConfidence: $skippedLowConfidence",
+    "ReviewQueueItems: $reviewQueueCount",
     "ProcessedSeries: $processedSeries",
     "SeriesPerMinute: $seriesPerMin",
     "AvgMetaFirstPassMs: $avgMetaMs",
@@ -1652,7 +1706,8 @@ $summary = @(
     "CSV: $csvPath",
     "TXT: $txtPath",
     "RENAMES: $renamePath",
-    "RENAMES_CSV: $renameCsvPath"
+    "RENAMES_CSV: $renameCsvPath",
+    "REVIEW_QUEUE_CSV: $reviewCsvPath"
 ) -join [Environment]::NewLine
 
 if ($script:SeriesStageDurations.Count -gt 0) {

@@ -1,5 +1,11 @@
 ﻿# CHANGELOG
 
+## 0.1.26 - 2026-04-30 16:58:00 +03:00
+- Match quality: внедрён `match_confidence_details` (детализация confidence по pattern/source/strict/final) в план и логи операций.
+- Safety: добавлен `strict_mode` (`settings`) — рискованные кейсы с заглушкой `Серия N` не переименовываются и отправляются в review.
+- Review flow: добавлен `*-review-queue.csv` для ручного разбора спорных/проблемных случаев.
+- Документация: обновлены `README.md` и `SeriesToolkit.settings.README.md` под `strict_mode` и review-очередь.
+
 ## 0.1.25 - 2026-04-30 16:50:00 +03:00
 - Batch performance: добавлен ограниченный параллелизм `batch_max_parallel` (`1..4`) с guardrail — включается только в `DryRun/VerifyOnly`.
 - Надёжность parallel-run: для worker-процессов отключена запись общего cache-файла (`SERIESTOOLKIT_DISABLE_CACHE_WRITE`), чтобы избежать гонок записи.
