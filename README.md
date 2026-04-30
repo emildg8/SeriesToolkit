@@ -140,6 +140,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 
 Каталог `LOGS`: CSV по операциям, краткий TXT и отдельный `*-renames.txt` с явным `FROM -> TO` по переименованиям.
 
+## Если метаданные не нашлись
+
+- Проверьте профиль: для максимального добора используйте `Full` (в GUI или `-ExecutionProfile Full`).
+- Убедитесь, что корректно задан `tmdb_api_key` в `SeriesToolkit.settings.json`; без ключа TMDB отключается и используются fallback-источники.
+- Для Кинопоиска обновите `kinopoisk_cookie` (если устарел сеанс, растёт шанс капчи/пустых ответов).
+- Увеличьте `metadata_request_timeout_sec` (например, до `90`) при медленном интернете.
+- Для повторной проверки проблемного сериала запустите `Manual + DryRun`, чтобы быстро увидеть причины в `LOGS/gui-progress-*.log`.
+- Если в файлах остались заглушки `Серия N`, проверьте `*-renames.txt` и `SeriesToolkit-episode-index.csv` в папке сериала: там видно, что найдено и что не удалось сопоставить.
+
 ## Обратная связь
 
 Репозиторий: [https://github.com/emildg8/SeriesToolkit](https://github.com/emildg8/SeriesToolkit)

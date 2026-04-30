@@ -123,13 +123,17 @@ $form.FormBorderStyle = 'Sizable'
 $form.MaximizeBox = $true
 $form.MinimizeBox = $true
 $form.ShowIcon = $true
-$form.BackColor = [Drawing.Color]::FromArgb(248, 248, 250)
+$form.BackColor = [Drawing.Color]::FromArgb(246, 246, 248)
 $form.Font = [Drawing.Font]::new('Segoe UI', 9.5)
 $form.ClientSize = [Drawing.Size]::new(920, 560)
 $form.MinimumSize = [Drawing.Size]::new(980, 620)
 try {
     $ico = Join-Path $ToolkitRoot 'assets\SeriesToolkit.icon.ico'
     if (Test-Path -LiteralPath $ico) { $form.Icon = New-Object System.Drawing.Icon($ico) }
+} catch { }
+try {
+    $dbProp = [System.Windows.Forms.Control].GetProperty('DoubleBuffered', [System.Reflection.BindingFlags] 'NonPublic,Instance')
+    if ($dbProp) { $dbProp.SetValue($form, $true, $null) }
 } catch { }
 
 $lblLang = New-Object Windows.Forms.Label
@@ -217,6 +221,7 @@ $lblProfileHint = New-Object Windows.Forms.Label
 $lblProfileHint.Left = 560; $lblProfileHint.Top = 278; $lblProfileHint.Width = 340
 $lblProfileHint.Height = 34
 $lblProfileHint.ForeColor = [Drawing.Color]::FromArgb(105, 105, 105)
+$lblProfileHint.Font = [Drawing.Font]::new('Segoe UI', 9)
 
 $btnRun = New-Object Windows.Forms.Button
 $btnRun.Left = 730; $btnRun.Top = 332; $btnRun.Width = 170; $btnRun.Height = 34
@@ -250,10 +255,12 @@ $btnMinimize.FlatStyle = 'Flat'
 $lblStatus = New-Object Windows.Forms.Label
 $lblStatus.Left = 20; $lblStatus.Top = 372; $lblStatus.Width = 880
 $lblStatus.Text = 'Статус: ожидание запуска'
+$lblStatus.ForeColor = [Drawing.Color]::FromArgb(45, 45, 45)
 
 $lblTime = New-Object Windows.Forms.Label
 $lblTime.Left = 20; $lblTime.Top = 332; $lblTime.Width = 390
 $lblTime.Text = 'Старт: -   Прошло: 00:00:00   ETA: -'
+$lblTime.ForeColor = [Drawing.Color]::FromArgb(80, 80, 80)
 
 $pbOverall = New-Object Windows.Forms.ProgressBar
 $pbOverall.Left = 20; $pbOverall.Top = 396; $pbOverall.Width = 880; $pbOverall.Height = 18
@@ -266,7 +273,43 @@ $tbLog.ScrollBars = 'Vertical'
 $tbLog.ReadOnly = $true
 $tbLog.WordWrap = $false
 $tbLog.Font = [Drawing.Font]::new('Consolas', 9)
+$tbLog.BackColor = [Drawing.Color]::FromArgb(252, 252, 253)
+$tbLog.BorderStyle = 'FixedSingle'
 $form.ClientSize = [Drawing.Size]::new(920, 560)
+
+$lineTop = New-Object Windows.Forms.Panel
+$lineTop.Height = 1
+$lineTop.BackColor = [Drawing.Color]::FromArgb(223, 223, 228)
+
+$lineBottom = New-Object Windows.Forms.Panel
+$lineBottom.Height = 1
+$lineBottom.BackColor = [Drawing.Color]::FromArgb(223, 223, 228)
+
+function Set-SecondaryButtonStyle([System.Windows.Forms.Button]$btn) {
+    if ($null -eq $btn) { return }
+    $btn.FlatStyle = 'Flat'
+    $btn.FlatAppearance.BorderSize = 1
+    $btn.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(205, 205, 210)
+    $btn.BackColor = [Drawing.Color]::FromArgb(252, 252, 253)
+    $btn.ForeColor = [Drawing.Color]::FromArgb(33, 33, 33)
+}
+
+function Set-PrimaryButtonStyle([System.Windows.Forms.Button]$btn) {
+    if ($null -eq $btn) { return }
+    $btn.FlatStyle = 'Flat'
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.BackColor = [Drawing.Color]::FromArgb(0, 122, 255)
+    $btn.ForeColor = [Drawing.Color]::White
+}
+
+Set-SecondaryButtonStyle $btnRoot
+Set-SecondaryButtonStyle $btnSeries
+Set-SecondaryButtonStyle $btnHtml
+Set-SecondaryButtonStyle $btnMinimize
+Set-SecondaryButtonStyle $btnSkip
+Set-SecondaryButtonStyle $btnPause
+Set-SecondaryButtonStyle $btnStop
+Set-PrimaryButtonStyle $btnRun
 
 function Update-Layout {
     $pad = 20
@@ -316,7 +359,9 @@ function Update-Layout {
 
     $lblTime.Left = $pad; $lblTime.Top = $btnRowTop; $lblTime.Width = [Math]::Max(220, ($btnMinimize.Left - $pad - $gap))
     $lblStatus.Left = $pad; $lblStatus.Top = 372; $lblStatus.Width = ($fullW - $pad * 2)
+    $lineTop.Left = $pad; $lineTop.Top = 388; $lineTop.Width = ($fullW - $pad * 2)
     $pbOverall.Left = $pad; $pbOverall.Top = 396; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
+    $lineBottom.Left = $pad; $lineBottom.Top = 446; $lineBottom.Width = ($fullW - $pad * 2)
     $tbLog.Left = $pad; $tbLog.Top = 420; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
 }
 
@@ -620,7 +665,7 @@ $btnRun.Add_Click({
     }
 })
 
-$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $pbOverall, $tbLog))
+$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $lineTop, $pbOverall, $lineBottom, $tbLog))
 $form.Add_Shown({ Update-Layout })
 $form.Add_SizeChanged({ Update-Layout })
 $timer = New-Object Windows.Forms.Timer
