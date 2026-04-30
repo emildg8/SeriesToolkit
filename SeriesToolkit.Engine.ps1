@@ -27,6 +27,12 @@ try {
     }
 } catch { }
 
+try {
+    if (Get-Command Initialize-WebClient -ErrorAction SilentlyContinue) {
+        Initialize-WebClient
+    }
+} catch { }
+
 function Get-TmdbApiKeyFromEnvironment {
     foreach ($name in @('TMDB_API_KEY', 'RENAME_VIDEO_TMDB_API_KEY', 'THEMOVIEDB_API_KEY')) {
         foreach ($scope in @('User', 'Machine', 'Process')) {
@@ -337,6 +343,9 @@ function Get-WikiEpisodeMapForSeries([string]$SeriesName) {
     if (-not (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue)) { return $map }
     try {
         $items = Get-EpisodesFromWikipediaSearchQueries $SeriesName
+        if ($items -and (Get-Command Expand-EpisodeListWithRussianWikipedia -ErrorAction SilentlyContinue)) {
+            $items = Expand-EpisodeListWithRussianWikipedia @($items) $SeriesName
+        }
         foreach ($it in @($items)) {
             if ($null -eq $it) { continue }
             $sn = if ($null -ne $it.season) { [int]$it.season } else { 0 }
@@ -349,6 +358,166 @@ function Get-WikiEpisodeMapForSeries([string]$SeriesName) {
         }
     } catch { }
     return $map
+}
+
+function Convert-EpisodeObjectsToHashtable([object[]]$List) {
+    $h = @{}
+    foreach ($it in @($List)) {
+        if ($null -eq $it) { continue }
+        $sn = if ($null -ne $it.season) { [int]$it.season } elseif ($null -ne $it.Season) { [int]$it.Season } else { 0 }
+        $en = if ($null -ne $it.episode) { [int]$it.episode } elseif ($null -ne $it.Episode) { [int]$it.Episode } else { 0 }
+        if ($sn -le 0 -or $en -le 0) { continue }
+        $tt = if ($null -ne $it.title) { [string]$it.title } elseif ($null -ne $it.Title) { [string]$it.Title } else { '' }
+        $tt = ConvertTo-SafeName $tt
+        if ([string]::IsNullOrWhiteSpace($tt)) { continue }
+        $h["$sn|$en"] = $tt
+    }
+    return $h
+}
+
+function Limit-HashtableToCyrillicEpisodeTitles([hashtable]$Map) {
+    if (-not $Map -or $Map.Count -eq 0) { return @{} }
+    $o = @{}
+    foreach ($k in $Map.Keys) {
+        $t = [string]$Map[$k]
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        if ($t -notmatch '\p{IsCyrillic}') { continue }
+        if (Get-Command Test-EpisodeTitleLooksLikePlaceholder -ErrorAction SilentlyContinue) {
+            if (Test-EpisodeTitleLooksLikePlaceholder $t) { continue }
+        }
+        $o[$k] = $t
+    }
+    return $o
+}
+
+function Get-CombinedEpisodeTitleMap([string]$SeriesName) {
+    $map = @{}
+    if ([string]::IsNullOrWhiteSpace($SeriesName)) { return $map }
+
+    $wikiList = $null
+    try {
+        if (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue) {
+            $wikiList = Get-EpisodesFromWikipediaSearchQueries $SeriesName
+        }
+    } catch { }
+    $wikiArr = @($wikiList)
+
+    $tmdbArr = $null
+    $pick = $null
+    if ($script:TmdbEnabled -and (Get-Command Search-TmdbTvSeries -ErrorAction SilentlyContinue) -and (Get-Command Get-EpisodesFromTmdbTvSeries -ErrorAction SilentlyContinue)) {
+        try {
+            $results = Search-TmdbTvSeries $SeriesName $script:TmdbApiKeyEffective
+            if ($results -and @($results).Count -gt 0) {
+                $best = -1
+                foreach ($r in @($results | Select-Object -First 8)) {
+                    $sc = Get-TmdbScore -Expected $SeriesName -CandidateRu ([string]$r.name) -CandidateOrig ([string]$r.original_name)
+                    if ($null -ne $r.popularity) { $sc += [int][Math]::Round([double]$r.popularity) }
+                    if ($sc -gt $best) { $best = $sc; $pick = $r }
+                }
+                if ($pick) {
+                    $tvId = [int]$pick.id
+                    if ($tvId -gt 0) {
+                        $tmdbArr = Get-EpisodesFromTmdbTvSeries $tvId $script:TmdbApiKeyEffective
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    $merged = $null
+    if ($tmdbArr -and @($tmdbArr).Count -gt 0 -and $wikiArr.Count -gt 0 -and (Get-Command Merge-EpisodeTitlesPreferRu -ErrorAction SilentlyContinue)) {
+        $merged = Merge-EpisodeTitlesPreferRu @($tmdbArr) @($wikiArr)
+    }
+    elseif ($tmdbArr -and @($tmdbArr).Count -gt 0 -and (Get-Command Expand-EpisodeListWithRussianWikipedia -ErrorAction SilentlyContinue)) {
+        $merged = @(Expand-EpisodeListWithRussianWikipedia @($tmdbArr) $SeriesName)
+    }
+    elseif ($wikiArr.Count -gt 0 -and (Get-Command Expand-EpisodeListWithRussianWikipedia -ErrorAction SilentlyContinue)) {
+        $merged = @(Expand-EpisodeListWithRussianWikipedia @($wikiArr) $SeriesName)
+    }
+    elseif ($wikiArr.Count -gt 0) {
+        $merged = $wikiArr
+    }
+    elseif ($tmdbArr) {
+        $merged = $tmdbArr
+    }
+
+    $kpArr = $null
+    if (Get-Command Get-EpisodesFromKinopoiskVerifiedForSeries -ErrorAction SilentlyContinue) {
+        try {
+            $ru = if ($pick) { [string]$pick.name } else { $null }
+            $orig = if ($pick) { [string]$pick.original_name } else { $null }
+            $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig
+        } catch { }
+    }
+    if ($merged -and @($merged).Count -gt 0 -and $kpArr -and @($kpArr).Count -gt 0 -and (Get-Command Merge-EpisodeTitlesPreferRu -ErrorAction SilentlyContinue)) {
+        $merged = Merge-EpisodeTitlesPreferRu @($merged) @($kpArr)
+    }
+    elseif ((-not $merged -or @($merged).Count -eq 0) -and $kpArr -and @($kpArr).Count -gt 0) {
+        $merged = $kpArr
+    }
+
+    if ($merged -and @($merged).Count -gt 0) {
+        $h = Convert-EpisodeObjectsToHashtable @($merged)
+        return (Limit-HashtableToCyrillicEpisodeTitles $h)
+    }
+    return $map
+}
+
+function Test-IsPlaceholderEpisodeFileName([string]$BaseName) {
+    if ([string]::IsNullOrWhiteSpace($BaseName)) { return $false }
+    return [bool]($BaseName -match '(?i)\s-\sS\d{1,2}E\d{1,3}\s-\sСерия\s+\d+\s*$')
+}
+
+function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$EpisodeTitlesMap) {
+    $seriesName = ConvertTo-SafeName $SeriesDir.Name
+    $files = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$' })
+    foreach ($f in $files) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        if (-not (Test-IsPlaceholderEpisodeFileName $base)) { continue }
+        if ($base -notmatch '(?i)\s-\sS(?<s>\d{1,2})E(?<e>\d{1,3})\s-\sСерия\s+(?<p>\d+)\s*$') { continue }
+        $sn = [int]$Matches['s']
+        $en = [int]$Matches['e']
+        $key = "$sn|$en"
+        $title = $null
+        if ($EpisodeTitlesMap.ContainsKey($key)) { $title = $EpisodeTitlesMap[$key] }
+        if ([string]::IsNullOrWhiteSpace($title)) { continue }
+        if ($title -notmatch '\p{IsCyrillic}') { continue }
+        if (Get-Command Test-EpisodeTitleLooksLikePlaceholder -ErrorAction SilentlyContinue) {
+            if (Test-EpisodeTitleLooksLikePlaceholder $title) { continue }
+        }
+        elseif ($title -match '^(?i)(?:серия|episode)\s*\d+\s*$') { continue }
+        $code = ('S{0:00}E{1:00}' -f $sn, $en)
+        $newBase = ConvertTo-SafeName("$seriesName - $code - $title")
+        if ([string]::IsNullOrWhiteSpace($newBase)) { continue }
+        $seasonPath = Join-Path $SeriesDir.FullName (Get-SeasonFolderName $sn)
+        $target = Join-Path $seasonPath ($newBase + $f.Extension)
+        if ($f.FullName -ieq $target) { continue }
+        if ($DryRun) {
+            Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'DRYRUN' -SourcePath $f.FullName -TargetPath $target -Details 'Замена заглушки «Серия N» (ru.wikipedia, Кинопоиск, TMDB ru-RU только кириллица).'
+            continue
+        }
+        try {
+            if (-not (Test-Path -LiteralPath $seasonPath)) {
+                New-Item -ItemType Directory -Path $seasonPath -Force | Out-Null
+            }
+            Move-Item -LiteralPath $f.FullName -Destination $target -Force
+            Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'OK' -SourcePath $f.FullName -TargetPath $target -Details 'Замена заглушки «Серия N» (ru.wikipedia, Кинопоиск, TMDB ru-RU только кириллица).'
+        } catch {
+            Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'ERROR' -SourcePath $f.FullName -TargetPath $target -Details $_.Exception.Message
+        }
+    }
+}
+
+function Add-WarningsForRemainingPlaceholders([System.IO.DirectoryInfo]$SeriesDir) {
+    $files = @(Get-ChildItem -LiteralPath $SeriesDir.FullName -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts)$' })
+    foreach ($f in $files) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        if (Test-IsPlaceholderEpisodeFileName $base) {
+            Add-Record -Series $SeriesDir.Name -Action 'unresolved-placeholder' -Status 'WARN' -SourcePath $f.FullName -Details 'Осталась заглушка «Серия N»: нет подтверждённого русскоязычного названия (ru.wikipedia, Кинопоиск с проверкой совпадения с TMDB/именем папки, TMDB ru-RU с кириллицей).'
+        }
+    }
 }
 
 function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$EpisodeTitlesMap) {
@@ -392,6 +561,7 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
         $hKey = "$($tag.Season)|$($tag.Episode)"
         if ($EpisodeTitlesMap.ContainsKey($hKey)) { $title = $EpisodeTitlesMap[$hKey] }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = Invoke-TmdbEpisodeNameLookup -SeriesName $seriesName -Season $tag.Season -Episode $tag.Episode }
+        if ($title -and $title -notmatch '\p{IsCyrillic}') { $title = $null }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = "Серия $($tag.Episode)" }
         $newBase = ConvertTo-SafeName("$seriesName - $code - $title")
         if ([string]::IsNullOrWhiteSpace($newBase)) {
@@ -465,7 +635,12 @@ function Normalize-SeasonFolderNames([System.IO.DirectoryInfo]$SeriesDir) {
 function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
     foreach ($op in $Plan) {
         if ($op.source -ieq $op.target) {
-            Add-Record -Series $op.series -Action 'skip-file' -Status 'INFO' -SourcePath $op.source -Details 'Уже корректно.'
+            $bn = [System.IO.Path]::GetFileNameWithoutExtension($op.source)
+            if (Test-IsPlaceholderEpisodeFileName $bn) {
+                Add-Record -Series $op.series -Action 'skip-file' -Status 'INFO' -SourcePath $op.source -Details 'Заглушка «Серия N»; далее repair-placeholder-title (Wiki/Кинопоиск/TMDB кириллица).'
+            } else {
+                Add-Record -Series $op.series -Action 'skip-file' -Status 'INFO' -SourcePath $op.source -Details 'Уже корректно.'
+            }
             continue
         }
         if ($DryRun) {
@@ -502,15 +677,15 @@ function Remove-EmptyDirectories([System.IO.DirectoryInfo]$SeriesDir) {
 function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
     Normalize-SeasonFolderNames -SeriesDir $SeriesDir
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
-    $tmdbTitles = Get-TmdbEpisodeMapForSeries -SeriesName $seriesName
-    $wikiTitles = Get-WikiEpisodeMapForSeries -SeriesName $seriesName
-    $tmdbAndWiki = Merge-EpisodeTitleMaps -Primary $wikiTitles -Fallback $tmdbTitles
-    $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $tmdbAndWiki
+    $combinedTitles = Get-CombinedEpisodeTitleMap -SeriesName $seriesName
+    $allTitles = Merge-EpisodeTitleMaps -Primary $HtmlTitles -Fallback $combinedTitles
     $plan = Build-RenamePlanForSeries -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Resolve-TargetConflicts -Plan $plan
     Ensure-SeasonFolders -Plan $plan -SeriesName $SeriesDir.Name
     Apply-Plan -Plan $plan
+    Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Remove-EmptyDirectories -SeriesDir $SeriesDir
+    Add-WarningsForRemainingPlaceholders -SeriesDir $SeriesDir
 }
 
 if (Test-Path -LiteralPath $ReferenceRootPath) {

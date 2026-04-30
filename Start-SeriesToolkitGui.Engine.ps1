@@ -1,12 +1,54 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
-param()
+param(
+    [string]$ToolkitRoot = ''
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$uiPath = Join-Path $PSScriptRoot 'UiStrings.ps1'
-$enginePath = Join-Path $PSScriptRoot 'SeriesToolkit.ps1'
+function Resolve-SeriesToolkitRoot {
+    param([string]$Explicit)
+    if (-not [string]::IsNullOrWhiteSpace($Explicit)) {
+        return $Explicit.Trim().TrimEnd('\', '/')
+    }
+    $envRoot = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_ROOT', 'User')
+    if ([string]::IsNullOrWhiteSpace($envRoot)) { $envRoot = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_ROOT', 'Process') }
+    if (-not [string]::IsNullOrWhiteSpace($envRoot)) {
+        return $envRoot.Trim().TrimEnd('\', '/')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        return $PSScriptRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        $d = Split-Path -Parent $PSCommandPath
+        if (-not [string]::IsNullOrWhiteSpace($d)) { return $d }
+    }
+    try {
+        $argv = [Environment]::GetCommandLineArgs()
+        if ($argv -and $argv.Length -gt 0) {
+            $a0 = [string]$argv[0]
+            if ($a0 -match '\.(exe|EXE)$' -and (Test-Path -LiteralPath $a0)) {
+                return (Split-Path -Parent $a0)
+            }
+        }
+    } catch { }
+    try {
+        $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        if (-not [string]::IsNullOrWhiteSpace($exe) -and (Test-Path -LiteralPath $exe)) {
+            return (Split-Path -Parent $exe)
+        }
+    } catch { }
+    return $null
+}
+
+$ToolkitRoot = Resolve-SeriesToolkitRoot -Explicit $ToolkitRoot
+if ([string]::IsNullOrWhiteSpace($ToolkitRoot)) {
+    throw 'ToolkitRoot пуст: задайте SERIESTOOLKIT_ROOT или положите SeriesToolkit.GUI.exe в папку со скриптами.'
+}
+
+$uiPath = Join-Path $ToolkitRoot 'UiStrings.ps1'
+$enginePath = Join-Path $ToolkitRoot 'SeriesToolkit.ps1'
 if (-not (Test-Path -LiteralPath $uiPath)) { throw "UiStrings.ps1 not found: $uiPath" }
 if (-not (Test-Path -LiteralPath $enginePath)) { throw "SeriesToolkit.ps1 not found: $enginePath" }
 . $uiPath
@@ -128,21 +170,35 @@ $cbLang.Add_SelectedIndexChanged({
 
 $btnRun.Add_Click({
     try {
-        $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $enginePath)
-        if ($rbManual.Checked) {
-            $args += @('-Mode', 'Manual', '-SeriesPath', $tbSeries.Text)
-        } else {
-            $args += @('-Mode', 'Batch', '-RootPath', $tbRoot.Text)
+        if ([string]::IsNullOrWhiteSpace($enginePath) -or -not (Test-Path -LiteralPath $enginePath)) {
+            throw "Не найден SeriesToolkit.ps1: $enginePath"
         }
-        if (-not [string]::IsNullOrWhiteSpace($tbHtml.Text)) { $args += @('-HtmlPath', $tbHtml.Text) }
-        if ($cbTmdb.Checked) { $args += '-UseTmdb' }
-        if ($cbDry.Checked) { $args += '-DryRun' } else { $args += '-Apply' }
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
+        $argList = [System.Collections.Generic.List[string]]::new()
+        [void]$argList.AddRange(@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $enginePath))
+        if ($rbManual.Checked) {
+            $sp = $tbSeries.Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($sp)) { throw 'Укажите папку одного сериала (Manual).' }
+            [void]$argList.AddRange(@('-Mode', 'Manual', '-SeriesPath', $sp))
+        } else {
+            $rp = $tbRoot.Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($rp)) { throw 'Укажите корень библиотеки (Batch).' }
+            [void]$argList.AddRange(@('-Mode', 'Batch', '-RootPath', $rp))
+        }
+        if (-not [string]::IsNullOrWhiteSpace($tbHtml.Text)) {
+            [void]$argList.AddRange(@('-HtmlPath', $tbHtml.Text.Trim()))
+        }
+        if ($cbTmdb.Checked) { [void]$argList.Add('-UseTmdb') }
+        if ($cbDry.Checked) { [void]$argList.Add('-DryRun') } else { [void]$argList.Add('-Apply') }
 
-        & powershell.exe @args
+        & $psExe @($argList.ToArray())
         $res = [Windows.Forms.MessageBox]::Show($script:s.DoneOpenLog, $script:s.Done, [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Information)
         if ($res -eq [Windows.Forms.DialogResult]::Yes) {
-            $logPath = Join-Path $PSScriptRoot 'LOGS'
-            if (Test-Path -LiteralPath $logPath) { Start-Process explorer.exe $logPath }
+            $logPath = Join-Path $ToolkitRoot 'LOGS'
+            if (-not [string]::IsNullOrWhiteSpace($logPath) -and (Test-Path -LiteralPath $logPath)) {
+                Start-Process -FilePath explorer.exe -ArgumentList $logPath
+            }
         }
     } catch {
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, $script:s.Error, [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Error) | Out-Null

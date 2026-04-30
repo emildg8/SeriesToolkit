@@ -11,8 +11,9 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) { $ProjectRoot = $PSScriptRoot }
 if ([string]::IsNullOrWhiteSpace($OutputFile)) { $OutputFile = Join-Path $ProjectRoot 'SeriesToolkit.GUI.exe' }
 
-$guiScript = Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1'
-if (-not (Test-Path -LiteralPath $guiScript)) { throw "GUI script not found: $guiScript" }
+# Компилируем Engine напрямую: ps2exe не должен вызывать второй .ps1 через & (ломается внутри EXE).
+$guiScript = Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1'
+if (-not (Test-Path -LiteralPath $guiScript)) { throw "GUI Engine script not found: $guiScript" }
 
 if (-not (Get-Command Invoke-ps2exe -ErrorAction SilentlyContinue)) {
     try {
