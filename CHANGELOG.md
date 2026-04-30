@@ -1,5 +1,11 @@
 ﻿# CHANGELOG
 
+## 0.1.24 - 2026-04-30 16:46:00 +03:00
+- GUI: выровнена зона под статусом/диагностикой, добавлено стабильное отображение текущего этапа в readonly-блоке `Диагностика`.
+- Надёжность: добавлен `Invoke-WithRetry` для критических metadata-шагов (first-pass и second-pass запросы) с backoff.
+- Метрики: в итоговый TXT добавлены throughput-поля `ProcessedSeries`, `SeriesPerMinute`, `AvgMetaFirstPassMs`.
+- Документация: `README.md` обновлён под новые throughput-метрики.
+
 ## 0.1.23 - 2026-04-30 16:41:00 +03:00
 - GitHub publish: исправлен перенос директорий `docs/assets` в `Sync-GitHub.ps1` (устранено вложение `docs/docs/...`).
 - Документация: восстановлено корректное отображение GUI-скриншота по пути `docs/images/01-gui-main-v2.png` в README.

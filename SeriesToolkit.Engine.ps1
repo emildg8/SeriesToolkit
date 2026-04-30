@@ -187,6 +187,7 @@ $script:SeriesMetaCachePath = Join-Path $PSScriptRoot 'LOGS\series-meta-cache.js
 $script:SeriesStageDurations = [System.Collections.Generic.List[object]]::new()
 $script:SeriesAliases = @{}
 $script:LastMetaDiagnostics = ''
+$script:RunStartedAt = Get-Date
 $script:ProgressLogPath = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_PROGRESS_LOG', 'Process')
 $script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
 $script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
@@ -402,6 +403,27 @@ function Get-SeriesSearchQueryCandidates([string]$SeriesName) {
         }
     }
     return @($out)
+}
+
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [string]$Label = 'operation',
+        [int]$Attempts = 2,
+        [int]$DelayMs = 450
+    )
+    if ($Attempts -lt 1) { $Attempts = 1 }
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            $result = & $Action
+            return $result
+        } catch {
+            if ($i -ge $Attempts) { throw }
+            Write-ToolkitProgress ("[SeriesToolkit][Retry] {0} failed (attempt {1}/{2}): {3}" -f $Label, $i, $Attempts, $_.Exception.Message)
+            Start-Sleep -Milliseconds ([Math]::Min(3000, ($DelayMs * $i)))
+        }
+    }
+    return $null
 }
 
 function Get-TmdbScore([string]$Expected, [string]$CandidateRu, [string]$CandidateOrig) {
@@ -1312,7 +1334,11 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
             if ($query -ne $seriesRawName) {
                 Write-ToolkitProgress ("[SeriesToolkit][Alias] {0} :: query => {1}" -f $SeriesDir.Name, $query)
             }
-            $chunk = @(Get-CombinedEpisodeMergedObjects @metaArgs)
+            $chunk = @(
+                Invoke-WithRetry -Label ("meta-first-pass:{0}" -f $query) -Attempts 2 -Action {
+                    Get-CombinedEpisodeMergedObjects @metaArgs
+                }
+            )
             if ($chunk.Count -eq 0) { continue }
             if ($mergedFirst.Count -eq 0) {
                 $mergedFirst = $chunk
@@ -1407,7 +1433,10 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     $stageSecondStarted = Get-Date
     $extraA = @{}
     foreach ($q in $seriesQueryCandidates) {
-        $m = Get-CombinedEpisodeTitleMap -SeriesName $q -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
+        $m = Invoke-WithRetry -Label ("meta-second-pass:{0}" -f $q) -Attempts 2 -Action {
+            Get-CombinedEpisodeTitleMap -SeriesName $q -KinopoiskMinScore $kp2 -AggressiveDdg -AggressiveWeb
+        }
+        if ($null -eq $m) { $m = @{} }
         $extraA = Merge-EpisodeTitleMaps -Primary $extraA -Fallback $m
         if ($q -ne $seriesRawName -and $m.Count -gt 0) {
             Write-ToolkitProgress ("[SeriesToolkit][Alias] {0} :: second-pass query => {1}" -f $SeriesDir.Name, $q)
@@ -1501,6 +1530,18 @@ $err = @($script:Records | Where-Object { $_.status -eq 'ERROR' }).Count
 $renamedOk = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'OK' }).Count
 $renamedDry = @($script:Records | Where-Object { $_.action -eq 'move-rename-file' -and $_.status -eq 'DRYRUN' }).Count
 $skippedLowConfidence = @($script:Records | Where-Object { $_.action -eq 'skip-low-confidence' }).Count
+$processedSeries = @(
+    $script:Records |
+        Where-Object { $_.series -and $_.series -ne '-' } |
+        Group-Object series
+).Count
+$elapsedSec = [Math]::Max(1.0, ((Get-Date) - $script:RunStartedAt).TotalSeconds)
+$seriesPerMin = [Math]::Round((60.0 * $processedSeries) / $elapsedSec, 2)
+$metaRows = @($script:SeriesStageDurations | Where-Object { $_.stage -eq 'meta_first_pass' })
+$avgMetaMs = 0
+if ($metaRows.Count -gt 0) {
+    $avgMetaMs = [int][Math]::Round((($metaRows | Measure-Object -Property ms -Average).Average))
+}
 $summary = @(
     "Mode: $Mode",
     "RunMode: $(if ($DryRun) { 'DryRun' } else { 'Apply' })",
@@ -1513,6 +1554,9 @@ $summary = @(
     "RenamedOk: $renamedOk",
     "RenamedDryRun: $renamedDry",
     "SkippedLowConfidence: $skippedLowConfidence",
+    "ProcessedSeries: $processedSeries",
+    "SeriesPerMinute: $seriesPerMin",
+    "AvgMetaFirstPassMs: $avgMetaMs",
     "Warnings: $warn",
     "Errors: $err",
     "CSV: $csvPath",

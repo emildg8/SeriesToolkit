@@ -373,13 +373,13 @@ function Update-Layout {
     $btnMinimize.Left = $btnSkip.Left - $gap - $smallBtnW; $btnMinimize.Top = $btnRowTop; $btnMinimize.Width = $smallBtnW; $btnMinimize.Height = 34
 
     $lblTime.Left = $pad; $lblTime.Top = $btnRowTop; $lblTime.Width = [Math]::Max(220, ($btnMinimize.Left - $pad - $gap))
-    $lblStatus.Left = $pad; $lblStatus.Top = 372; $lblStatus.Width = ($fullW - $pad * 2)
+    $lblStatus.Left = $pad; $lblStatus.Top = 370; $lblStatus.Width = ($fullW - $pad * 2)
     $lblDiag.Left = $pad; $lblDiag.Top = 394; $lblDiag.Width = 110
     $tbDiag.Left = ($lblDiag.Left + $lblDiag.Width + 6); $tbDiag.Top = 390; $tbDiag.Width = ($fullW - $pad - $tbDiag.Left); $tbDiag.Height = 24
-    $lineTop.Left = $pad; $lineTop.Top = 420; $lineTop.Width = ($fullW - $pad * 2)
-    $pbOverall.Left = $pad; $pbOverall.Top = 428; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
-    $lineBottom.Left = $pad; $lineBottom.Top = 456; $lineBottom.Width = ($fullW - $pad * 2)
-    $tbLog.Left = $pad; $tbLog.Top = 464; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
+    $lineTop.Left = $pad; $lineTop.Top = 422; $lineTop.Width = ($fullW - $pad * 2)
+    $pbOverall.Left = $pad; $pbOverall.Top = 430; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
+    $lineBottom.Left = $pad; $lineBottom.Top = 454; $lineBottom.Width = ($fullW - $pad * 2)
+    $tbLog.Left = $pad; $tbLog.Top = 462; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
 }
 
 function Refresh-Texts {
@@ -475,6 +475,9 @@ function Append-LogLine([string]$line) {
     if ($line -match '\[SeriesProgress\s+(?<pct>\d+)%') {
         $script:CurrentSeriesPercent = [int]$Matches['pct']
         if ($script:CurrentSeriesPercent -ge 100) { $script:CompletedSeries = [Math]::Max($script:CompletedSeries, $script:CurrentSeriesIndex) }
+    }
+    if ($line -match '\[SeriesToolkit\]\[SeriesProgress\s+\d+%\s+\d+/\d+\]\s+(?<series>.+?)\s+::\s+(?<stage>.+)$') {
+        $tbDiag.Text = ("Этап: {0}" -f [string]$Matches['stage'])
     }
     if ($line -match '\[SeriesToolkit\]\[Diag\]\s+(?<series>.+?)\s+::\s+(?<msg>.+)$') {
         $tbDiag.Text = ("{0}: {1}" -f $Matches['series'], $Matches['msg'])

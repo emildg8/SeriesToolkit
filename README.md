@@ -147,6 +147,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 
 Каталог `LOGS`: CSV по операциям, краткий TXT и отдельный `*-renames.txt` с явным `FROM -> TO` по переименованиям.
 Также формируется `*-renames.csv` для фильтрации/аналитики в Excel/BI.
+В итоговом TXT добавлены throughput-метрики: `ProcessedSeries`, `SeriesPerMinute`, `AvgMetaFirstPassMs`.
 
 ## Если метаданные не нашлись
 
