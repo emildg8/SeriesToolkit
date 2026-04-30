@@ -67,6 +67,7 @@ $script:UserSettings = @{
     metadata_cache_ttl_hours = 168
     metadata_cache_force_refresh = $false
     metadata_request_timeout_sec = 60
+    metadata_web_search_engines = @('ddg', 'yandex', 'google')
     metadata_enable_stage_timing = $true
     metadata_slow_series_top_n = 10
     placeholder_repair_allow_latin_titles = $false
@@ -119,6 +120,14 @@ function Import-SeriesToolkitUserSettings {
         if ($key -contains 'metadata_request_timeout_sec' -and $null -ne $j.metadata_request_timeout_sec) {
             $script:UserSettings.metadata_request_timeout_sec = [int]$j.metadata_request_timeout_sec
         }
+        if ($key -contains 'metadata_web_search_engines' -and $null -ne $j.metadata_web_search_engines) {
+            $arr = @()
+            foreach ($it in @($j.metadata_web_search_engines)) {
+                $x = ([string]$it).Trim().ToLowerInvariant()
+                if ($x -in @('ddg', 'yandex', 'google')) { $arr += $x }
+            }
+            if ($arr.Count -gt 0) { $script:UserSettings.metadata_web_search_engines = @($arr | Select-Object -Unique) }
+        }
         if ($key -contains 'metadata_enable_stage_timing' -and $null -ne $j.metadata_enable_stage_timing) {
             $script:UserSettings.metadata_enable_stage_timing = [bool]$j.metadata_enable_stage_timing
         }
@@ -143,6 +152,11 @@ if ($ExecutionProfile -in @('Fast', 'Balanced', 'Full')) {
 }
 try {
     [Environment]::SetEnvironmentVariable('SERIESTOOLKIT_METADATA_TIMEOUT_SEC', ([string][int]$script:UserSettings.metadata_request_timeout_sec), 'Process')
+} catch { }
+try {
+    $engines = @($script:UserSettings.metadata_web_search_engines | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { $_ })
+    if ($engines.Count -eq 0) { $engines = @('ddg', 'yandex', 'google') }
+    [Environment]::SetEnvironmentVariable('SERIESTOOLKIT_WEB_SEARCH_ENGINES', ($engines -join ','), 'Process')
 } catch { }
 
 $script:ToolkitVersion = '0.0.0'
@@ -943,6 +957,7 @@ function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [has
         if ($f.FullName -ieq $target) { continue }
         if ($DryRun) {
             Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'DRYRUN' -SourcePath $f.FullName -TargetPath $target -Details 'Замена заглушки «Серия N» (ru.wikipedia, Кинопоиск, TMDB ru-RU только кириллица).'
+            Write-ToolkitProgress ("[SeriesToolkit][RepairRename][DRYRUN] {0} -> {1}" -f $f.FullName, $target)
             continue
         }
         try {
@@ -951,8 +966,10 @@ function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [has
             }
             Move-Item -LiteralPath $f.FullName -Destination $target -Force
             Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'OK' -SourcePath $f.FullName -TargetPath $target -Details 'Замена заглушки «Серия N» (ru.wikipedia, Кинопоиск, TMDB ru-RU только кириллица).'
+            Write-ToolkitProgress ("[SeriesToolkit][RepairRename][OK] {0} -> {1}" -f $f.FullName, $target)
         } catch {
             Add-Record -Series $SeriesDir.Name -Action 'repair-placeholder-title' -Status 'ERROR' -SourcePath $f.FullName -TargetPath $target -Details $_.Exception.Message
+            Write-ToolkitProgress ("[SeriesToolkit][RepairRename][ERROR] {0} -> {1} :: {2}" -f $f.FullName, $target, $_.Exception.Message)
         }
     }
 }
@@ -1103,13 +1120,16 @@ function Apply-Plan([System.Collections.Generic.List[object]]$Plan) {
         }
         if ($DryRun) {
             Add-Record -Series $op.series -Action 'move-rename-file' -Status 'DRYRUN' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}" -f $op.pattern, $op.confidence)
+            Write-ToolkitProgress ("[SeriesToolkit][Rename][DRYRUN] {0} -> {1}" -f $op.source, $op.target)
             continue
         }
         try {
             Move-Item -LiteralPath $op.source -Destination $op.target -Force
             Add-Record -Series $op.series -Action 'move-rename-file' -Status 'OK' -SourcePath $op.source -TargetPath $op.target -Details ("pattern={0}; confidence={1}" -f $op.pattern, $op.confidence)
+            Write-ToolkitProgress ("[SeriesToolkit][Rename][OK] {0} -> {1}" -f $op.source, $op.target)
         } catch {
             Add-Record -Series $op.series -Action 'move-rename-file' -Status 'ERROR' -SourcePath $op.source -TargetPath $op.target -Details $_.Exception.Message
+            Write-ToolkitProgress ("[SeriesToolkit][Rename][ERROR] {0} -> {1} :: {2}" -f $op.source, $op.target, $_.Exception.Message)
         }
     }
 }
@@ -1311,8 +1331,37 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $modeTag = if ($DryRun) { 'dryrun' } else { 'apply' }
 $csvPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.csv")
 $txtPath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp.txt")
+$renamePath = Join-Path $LogDirectory ("series-toolkit-v$($script:ToolkitVersion)-$($Mode.ToLowerInvariant())-$modeTag-$stamp-renames.txt")
 $script:Records | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
 Save-SeriesMetaCache
+
+$renameRows = @(
+    $script:Records |
+        Where-Object {
+            $_.source_path -and $_.target_path -and
+            $_.source_path -ne $_.target_path -and
+            $_.action -in @('move-rename-file', 'repair-placeholder-title', 'rename-season-folder')
+        } |
+        Select-Object time, series, action, status, source_path, target_path
+)
+$renameLines = [System.Collections.Generic.List[string]]::new()
+$renameLines.Add('SeriesToolkit rename diff log')
+$renameLines.Add(("Generated: {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
+$renameLines.Add(("Mode: {0}" -f $Mode))
+$renameLines.Add(("RunMode: {0}" -f (if ($DryRun) { 'DryRun' } else { 'Apply' })))
+$renameLines.Add(("ExecutionProfile: {0}" -f (Get-ExecutionProfileResolved)))
+$renameLines.Add('')
+if ($renameRows.Count -eq 0) {
+    $renameLines.Add('No rename operations recorded.')
+} else {
+    foreach ($r in $renameRows) {
+        $renameLines.Add(("[{0}] [{1}] [{2}] {3}" -f $r.time, $r.status, $r.action, $r.series))
+        $renameLines.Add(("  FROM: {0}" -f $r.source_path))
+        $renameLines.Add(("  TO  : {0}" -f $r.target_path))
+        $renameLines.Add('')
+    }
+}
+Set-Content -LiteralPath $renamePath -Value @($renameLines) -Encoding UTF8
 
 $warn = @($script:Records | Where-Object { $_.status -eq 'WARN' }).Count
 $err = @($script:Records | Where-Object { $_.status -eq 'ERROR' }).Count
@@ -1326,7 +1375,8 @@ $summary = @(
     "Warnings: $warn",
     "Errors: $err",
     "CSV: $csvPath",
-    "TXT: $txtPath"
+    "TXT: $txtPath",
+    "RENAMES: $renamePath"
 ) -join [Environment]::NewLine
 
 if ($script:SeriesStageDurations.Count -gt 0) {

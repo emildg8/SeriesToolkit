@@ -1425,6 +1425,18 @@ function Search-GoogleHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14)
     return @(@($found) | Select-Object -First $Max)
 }
 
+function Get-SeriesToolkitEnabledWebSearchEngines {
+    $raw = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_WEB_SEARCH_ENGINES', 'Process')
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @('ddg', 'yandex', 'google') }
+    $out = @()
+    foreach ($part in ($raw -split ',')) {
+        $x = ([string]$part).Trim().ToLowerInvariant()
+        if ($x -in @('ddg', 'yandex', 'google')) { $out += $x }
+    }
+    if ($out.Count -eq 0) { return @('ddg', 'yandex', 'google') }
+    return @($out | Select-Object -Unique)
+}
+
 function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [string]$Base, [string]$Tail) {
     if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
     $queries = [System.Collections.Generic.List[string]]::new()
@@ -1512,13 +1524,17 @@ function Get-EpisodesFromWikipediaAggressiveWebMerge([string]$SearchQuery) {
 
     $allRows = [System.Collections.Generic.List[object]]::new()
     $seenUrls = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $engines = @(Get-SeriesToolkitEnabledWebSearchEngines)
     foreach ($q in ($queries | Select-Object -Unique)) {
-        $urlBuckets = @(
-            @(Search-DuckDuckGoHtmlForWikipediaUrls $q 24),
-            @(Search-YandexHtmlForWikipediaUrls $q 24),
-            @(Search-GoogleHtmlForWikipediaUrls $q 24)
-        )
-        foreach ($bucket in $urlBuckets) {
+        $urlBuckets = [System.Collections.Generic.List[object]]::new()
+        foreach ($engine in $engines) {
+            switch ($engine) {
+                'ddg' { [void]$urlBuckets.Add(@(Search-DuckDuckGoHtmlForWikipediaUrls $q 24)) }
+                'yandex' { [void]$urlBuckets.Add(@(Search-YandexHtmlForWikipediaUrls $q 24)) }
+                'google' { [void]$urlBuckets.Add(@(Search-GoogleHtmlForWikipediaUrls $q 24)) }
+            }
+        }
+        foreach ($bucket in @($urlBuckets)) {
             foreach ($pageUrl in @($bucket)) {
                 if ([string]::IsNullOrWhiteSpace($pageUrl)) { continue }
                 if (-not $seenUrls.Add($pageUrl)) { continue }

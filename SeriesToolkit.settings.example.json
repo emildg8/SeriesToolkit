@@ -9,6 +9,7 @@
   "metadata_cache_ttl_hours": 168,
   "metadata_cache_force_refresh": false,
   "metadata_request_timeout_sec": 60,
+  "metadata_web_search_engines": ["ddg", "yandex", "google"],
   "metadata_enable_stage_timing": true,
   "metadata_slow_series_top_n": 10,
   "placeholder_repair_allow_latin_titles": false,

@@ -126,6 +126,7 @@ $form.ShowIcon = $true
 $form.BackColor = [Drawing.Color]::FromArgb(248, 248, 250)
 $form.Font = [Drawing.Font]::new('Segoe UI', 9.5)
 $form.ClientSize = [Drawing.Size]::new(920, 560)
+$form.MinimumSize = [Drawing.Size]::new(980, 620)
 try {
     $ico = Join-Path $ToolkitRoot 'assets\SeriesToolkit.icon.ico'
     if (Test-Path -LiteralPath $ico) { $form.Icon = New-Object System.Drawing.Icon($ico) }
@@ -163,6 +164,7 @@ $tbRoot.Left = 20; $tbRoot.Top = 112; $tbRoot.Width = 780
 $tbRoot.Text = '\\MEDIA-SERVER\Video\Cartoons'
 $btnRoot = New-Object Windows.Forms.Button
 $btnRoot.Left = 810; $btnRoot.Top = 110; $btnRoot.Width = 90
+$btnRoot.FlatStyle = 'Flat'
 
 $lblSeries = New-Object Windows.Forms.Label
 $lblSeries.Left = 20; $lblSeries.Top = 146; $lblSeries.Width = 180
@@ -170,6 +172,7 @@ $tbSeries = New-Object Windows.Forms.TextBox
 $tbSeries.Left = 20; $tbSeries.Top = 166; $tbSeries.Width = 780
 $btnSeries = New-Object Windows.Forms.Button
 $btnSeries.Left = 810; $btnSeries.Top = 164; $btnSeries.Width = 90
+$btnSeries.FlatStyle = 'Flat'
 
 $lblHtml = New-Object Windows.Forms.Label
 $lblHtml.Left = 20; $lblHtml.Top = 200; $lblHtml.Width = 210
@@ -177,6 +180,7 @@ $tbHtml = New-Object Windows.Forms.TextBox
 $tbHtml.Left = 20; $tbHtml.Top = 220; $tbHtml.Width = 780
 $btnHtml = New-Object Windows.Forms.Button
 $btnHtml.Left = 810; $btnHtml.Top = 218; $btnHtml.Width = 90
+$btnHtml.FlatStyle = 'Flat'
 
 $cbTmdb = New-Object Windows.Forms.CheckBox
 $cbTmdb.Left = 20; $cbTmdb.Top = 256; $cbTmdb.Width = 220
@@ -186,13 +190,33 @@ $cbDry.Checked = $true
 
 $lblProfile = New-Object Windows.Forms.Label
 $lblProfile.Left = 560; $lblProfile.Top = 258; $lblProfile.Width = 120
-$lblProfile.Text = 'Профиль'
+$lblProfile.Text = 'Профиль запуска'
 
 $cbProfile = New-Object Windows.Forms.ComboBox
 $cbProfile.Left = 640; $cbProfile.Top = 254; $cbProfile.Width = 260
 $cbProfile.DropDownStyle = 'DropDownList'
-[void]$cbProfile.Items.AddRange(@('Balanced', 'Fast', 'Full'))
-$cbProfile.SelectedIndex = 0
+$script:ProfileItems = @(
+    [PSCustomObject]@{ LabelRu = 'Быстрый'; LabelEn = 'Fast'; Value = 'Fast' },
+    [PSCustomObject]@{ LabelRu = 'Баланс'; LabelEn = 'Balanced'; Value = 'Balanced' },
+    [PSCustomObject]@{ LabelRu = 'Полный'; LabelEn = 'Full'; Value = 'Full' }
+)
+
+function Refresh-ProfileItems {
+    $cbProfile.Items.Clear()
+    foreach ($it in $script:ProfileItems) {
+        $label = if ($script:lang -eq 'en') { [string]$it.LabelEn } else { [string]$it.LabelRu }
+        [void]$cbProfile.Items.Add($label)
+    }
+    if ($cbProfile.Items.Count -gt 0) {
+        # По умолчанию — "Баланс"
+        $cbProfile.SelectedIndex = 1
+    }
+}
+
+$lblProfileHint = New-Object Windows.Forms.Label
+$lblProfileHint.Left = 560; $lblProfileHint.Top = 278; $lblProfileHint.Width = 340
+$lblProfileHint.Height = 34
+$lblProfileHint.ForeColor = [Drawing.Color]::FromArgb(105, 105, 105)
 
 $btnRun = New-Object Windows.Forms.Button
 $btnRun.Left = 730; $btnRun.Top = 332; $btnRun.Width = 170; $btnRun.Height = 34
@@ -204,16 +228,24 @@ $btnPause = New-Object Windows.Forms.Button
 $btnPause.Left = 530; $btnPause.Top = 332; $btnPause.Width = 90; $btnPause.Height = 34
 $btnPause.Text = 'Пауза'
 $btnPause.Enabled = $false
+$btnPause.FlatStyle = 'Flat'
 
 $btnStop = New-Object Windows.Forms.Button
 $btnStop.Left = 630; $btnStop.Top = 332; $btnStop.Width = 90; $btnStop.Height = 34
 $btnStop.Text = 'Стоп'
 $btnStop.Enabled = $false
+$btnStop.FlatStyle = 'Flat'
 
 $btnSkip = New-Object Windows.Forms.Button
 $btnSkip.Left = 430; $btnSkip.Top = 332; $btnSkip.Width = 90; $btnSkip.Height = 34
 $btnSkip.Text = 'Пропуск'
 $btnSkip.Enabled = $false
+$btnSkip.FlatStyle = 'Flat'
+
+$btnMinimize = New-Object Windows.Forms.Button
+$btnMinimize.Left = 330; $btnMinimize.Top = 332; $btnMinimize.Width = 90; $btnMinimize.Height = 34
+$btnMinimize.Text = 'Свернуть'
+$btnMinimize.FlatStyle = 'Flat'
 
 $lblStatus = New-Object Windows.Forms.Label
 $lblStatus.Left = 20; $lblStatus.Top = 372; $lblStatus.Width = 880
@@ -236,6 +268,58 @@ $tbLog.WordWrap = $false
 $tbLog.Font = [Drawing.Font]::new('Consolas', 9)
 $form.ClientSize = [Drawing.Size]::new(920, 560)
 
+function Update-Layout {
+    $pad = 20
+    $gap = 10
+    $browseW = 90
+    $smallBtnW = 90
+    $runBtnW = 170
+    $rowTop = 18
+    $fullW = $form.ClientSize.Width
+    $fullH = $form.ClientSize.Height
+    if ($fullW -lt 900 -or $fullH -lt 520) { return }
+
+    $lblLang.Left = $pad; $lblLang.Top = $rowTop; $lblLang.Width = 90
+    $cbLang.Left = 110; $cbLang.Top = ($rowTop - 4); $cbLang.Width = 100
+
+    $rbBatch.Left = $pad; $rbBatch.Top = 58; $rbBatch.Width = 280
+    $rbManual.Left = 330; $rbManual.Top = 58; $rbManual.Width = 320
+
+    $editW = $fullW - ($pad * 2) - $browseW - $gap
+    $btnX = $fullW - $pad - $browseW
+
+    $lblRoot.Left = $pad; $lblRoot.Top = 92; $lblRoot.Width = 220
+    $tbRoot.Left = $pad; $tbRoot.Top = 112; $tbRoot.Width = $editW
+    $btnRoot.Left = $btnX; $btnRoot.Top = 110; $btnRoot.Width = $browseW
+
+    $lblSeries.Left = $pad; $lblSeries.Top = 146; $lblSeries.Width = 220
+    $tbSeries.Left = $pad; $tbSeries.Top = 166; $tbSeries.Width = $editW
+    $btnSeries.Left = $btnX; $btnSeries.Top = 164; $btnSeries.Width = $browseW
+
+    $lblHtml.Left = $pad; $lblHtml.Top = 200; $lblHtml.Width = 240
+    $tbHtml.Left = $pad; $tbHtml.Top = 220; $tbHtml.Width = $editW
+    $btnHtml.Left = $btnX; $btnHtml.Top = 218; $btnHtml.Width = $browseW
+
+    $cbTmdb.Left = $pad; $cbTmdb.Top = 256; $cbTmdb.Width = 220
+    $cbDry.Left = 260; $cbDry.Top = 256; $cbDry.Width = 280
+
+    $cbProfile.Left = $fullW - $pad - 260; $cbProfile.Top = 254; $cbProfile.Width = 260
+    $lblProfile.Left = $cbProfile.Left - 130; $lblProfile.Top = 258; $lblProfile.Width = 125
+    $lblProfileHint.Left = $lblProfile.Left; $lblProfileHint.Top = 278; $lblProfileHint.Width = ($fullW - $pad - $lblProfileHint.Left); $lblProfileHint.Height = 34
+
+    $btnRowTop = 332
+    $btnRun.Left = $fullW - $pad - $runBtnW; $btnRun.Top = $btnRowTop; $btnRun.Width = $runBtnW; $btnRun.Height = 34
+    $btnStop.Left = $btnRun.Left - $gap - $smallBtnW; $btnStop.Top = $btnRowTop; $btnStop.Width = $smallBtnW; $btnStop.Height = 34
+    $btnPause.Left = $btnStop.Left - $gap - $smallBtnW; $btnPause.Top = $btnRowTop; $btnPause.Width = $smallBtnW; $btnPause.Height = 34
+    $btnSkip.Left = $btnPause.Left - $gap - $smallBtnW; $btnSkip.Top = $btnRowTop; $btnSkip.Width = $smallBtnW; $btnSkip.Height = 34
+    $btnMinimize.Left = $btnSkip.Left - $gap - $smallBtnW; $btnMinimize.Top = $btnRowTop; $btnMinimize.Width = $smallBtnW; $btnMinimize.Height = 34
+
+    $lblTime.Left = $pad; $lblTime.Top = $btnRowTop; $lblTime.Width = [Math]::Max(220, ($btnMinimize.Left - $pad - $gap))
+    $lblStatus.Left = $pad; $lblStatus.Top = 372; $lblStatus.Width = ($fullW - $pad * 2)
+    $pbOverall.Left = $pad; $pbOverall.Top = 396; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
+    $tbLog.Left = $pad; $tbLog.Top = 420; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
+}
+
 function Refresh-Texts {
     $script:s = Get-ToolkitStrings -Lang $script:lang
     $form.Text = $script:s.AppTitle
@@ -246,12 +330,39 @@ function Refresh-Texts {
     $lblHtml.Text = $script:s.HtmlPath
     $cbTmdb.Text = $script:s.UseTmdb
     $cbDry.Text = $script:s.DryRun
-    $lblProfile.Text = if ($script:lang -eq 'en') { 'Profile' } else { 'Профиль' }
+    $lblProfile.Text = [string]$script:s.ExecutionProfile
+    $selectedValue = 'Balanced'
+    if ($cbProfile.SelectedIndex -ge 0 -and $cbProfile.SelectedIndex -lt $script:ProfileItems.Count) {
+        $selectedValue = [string]$script:ProfileItems[$cbProfile.SelectedIndex].Value
+    }
+    Refresh-ProfileItems
+    for ($i = 0; $i -lt $script:ProfileItems.Count; $i++) {
+        if ([string]$script:ProfileItems[$i].Value -eq $selectedValue) {
+            $cbProfile.SelectedIndex = $i
+            break
+        }
+    }
+    switch ($selectedValue) {
+        'Fast' { $lblProfileHint.Text = [string]$script:s.ProfileHintFast }
+        'Full' { $lblProfileHint.Text = [string]$script:s.ProfileHintFull }
+        default { $lblProfileHint.Text = [string]$script:s.ProfileHintBalanced }
+    }
     $btnRun.Text = $script:s.Start
     $btnRoot.Text = $script:s.Browse
     $btnSeries.Text = $script:s.Browse
     $btnHtml.Text = $script:s.Browse
+    $btnMinimize.Text = [string]$script:s.Minimize
 }
+
+$cbProfile.Add_SelectedIndexChanged({
+    if ($cbProfile.SelectedIndex -lt 0 -or $cbProfile.SelectedIndex -ge $script:ProfileItems.Count) { return }
+    $selectedValue = [string]$script:ProfileItems[$cbProfile.SelectedIndex].Value
+    switch ($selectedValue) {
+        'Fast' { $lblProfileHint.Text = [string]$script:s.ProfileHintFast }
+        'Full' { $lblProfileHint.Text = [string]$script:s.ProfileHintFull }
+        default { $lblProfileHint.Text = [string]$script:s.ProfileHintBalanced }
+    }
+})
 
 function Pick-Folder([System.Windows.Forms.TextBox]$Target) {
     $dlg = New-Object Windows.Forms.FolderBrowserDialog
@@ -425,6 +536,12 @@ $btnSkip.Add_Click({
     }
 })
 
+$btnMinimize.Add_Click({
+    try {
+        $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
+    } catch { }
+})
+
 $btnRun.Add_Click({
     try {
         if ($script:RunInProgress) { return }
@@ -468,7 +585,11 @@ $btnRun.Add_Click({
         }
         if ($cbTmdb.Checked) { [void]$argList.Add('-UseTmdb') }
         if ($cbProfile.SelectedItem) {
-            Add-Args $argList @('-ExecutionProfile', [string]$cbProfile.SelectedItem)
+            $profileValue = 'Balanced'
+            if ($cbProfile.SelectedIndex -ge 0 -and $cbProfile.SelectedIndex -lt $script:ProfileItems.Count) {
+                $profileValue = [string]$script:ProfileItems[$cbProfile.SelectedIndex].Value
+            }
+            Add-Args $argList @('-ExecutionProfile', $profileValue)
         }
         if ($cbDry.Checked) { [void]$argList.Add('-DryRun') } else { [void]$argList.Add('-Apply') }
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -499,7 +620,9 @@ $btnRun.Add_Click({
     }
 })
 
-$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblTime, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $pbOverall, $tbLog))
+$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $pbOverall, $tbLog))
+$form.Add_Shown({ Update-Layout })
+$form.Add_SizeChanged({ Update-Layout })
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 120
 $timer.Add_Tick({
@@ -587,6 +710,7 @@ $form.Add_FormClosing({
     }
 })
 Refresh-Texts
+Update-Layout
 [void]$form.ShowDialog()
 Write-GuiTrace 'GUI closed.'
 

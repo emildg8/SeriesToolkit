@@ -18,6 +18,7 @@
 | `metadata_cache_ttl_hours` | TTL кэша метаданных в часах (по умолчанию 168 = 7 дней). |
 | `metadata_cache_force_refresh` | Если `true`, игнорировать кэш и всегда обновлять из сети. |
 | `metadata_request_timeout_sec` | Базовый таймаут сетевых запросов метаданных (сек). |
+| `metadata_web_search_engines` | Порядок web-поиска для агрессивного режима `Full`. Массив из: `ddg`, `yandex`, `google`. Можно отключать/менять порядок. |
 | `metadata_enable_stage_timing` | Если `true`, писать тайминги этапов (`wiki/tmdb/kp/ddg/merge/plan/apply`) в лог. |
 | `metadata_slow_series_top_n` | Сколько самых медленных сериалов показать в итоговой сводке. |
 | `placeholder_repair_allow_latin_titles` | Если `true`, для заглушек «Серия N» допускаются **латинские** названия из TMDB, когда кириллицы нет. |
@@ -47,3 +48,9 @@
 - `Fast`: TMDB-only (если есть API), иначе Wiki-only.
 - `Balanced`: TMDB + Wiki + КП (если есть API), иначе Wiki + КП.
 - `Full`: TMDB + Wiki + КП + DDG + Yandex + Google (если есть API), иначе Wiki + КП + DDG + Yandex + Google.
+
+Пример кастомизации:
+
+```json
+"metadata_web_search_engines": ["yandex", "ddg"]
+```
