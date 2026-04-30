@@ -6,6 +6,14 @@
 
 
 
+
+## 0.1.1 - 2026-04-30 04:53:24 +03:00
+- **`Set-ExecutionPolicy -Scope Process Bypass`** в `Start-SeriesToolkitGui.Engine.ps1`, `SeriesToolkit.Engine.ps1`, `SeriesToolkit.ps1` — устраняет ошибку загрузки `UiStrings.ps1` при политике `Restricted`.
+- **`SeriesToolkit.settings.example.json`** + **`SeriesToolkit.settings.README.md`**: опциональный **`SeriesToolkit.settings.json`** — `tmdb_api_key`, `kinopoisk_cookie`, `episode_filename_format`, `season_folder_format`; секреты в `.gitignore`.
+- Движок: **`Format-EpisodeFileBase`**, чтение настроек до инициализации TMDB.
+- **`Sync-GitHub.ps1`**: gist включает файлы настроек-примера.
+- Автоматически создан snapshot предыдущей версии: OLD/SeriesToolkit_v0.1.0_20260430-045324.
+
 ## 0.1.0 - 2026-04-30 04:43:23 +03:00
 - **Кинопоиск (обход типовых блокировок к PowerShell):** по умолчанию запросы через `curl.exe` (если есть), заголовки как у браузера, Referer, пауза; опционально cookie из `KINOPOISK_COOKIE` / `SERIESTOOLKIT_KINOPOISK_COOKIE`; `SERIESTOOLKIT_KP_USE_CURL=0` — только `Invoke-WebRequest`; `SERIESTOOLKIT_KP_DELAY_MS` — задержка между запросами; редирект `kp_query` через `curl -I` с разбором `Location`.
 - **Веб-поиск эпизодов:** если прямые запросы к API Википедии не дали список — запросы к `html.duckduckgo.com` (`site:ru.wikipedia.org …`) и разбор страниц списков эпизодов.

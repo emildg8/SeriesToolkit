@@ -14,6 +14,10 @@ param(
     [string]$TmdbApiKey = ''
 )
 
+try {
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
+} catch { }
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -47,6 +51,40 @@ if ($Apply -and $DryRun) { throw 'Нельзя одновременно указ
 if (-not $Apply) { $DryRun = $true }
 if ([string]::IsNullOrWhiteSpace($LogDirectory)) { $LogDirectory = Join-Path $PSScriptRoot 'LOGS' }
 if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null }
+
+$script:UserSettings = @{
+    episode_filename_format = '{Series} - {Code} - {Title}'
+    season_folder_format = 'Сезон {Season}'
+}
+
+function Import-SeriesToolkitUserSettings {
+    $p = Join-Path $PSScriptRoot 'SeriesToolkit.settings.json'
+    if (-not (Test-Path -LiteralPath $p)) { return }
+    try {
+        $j = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
+        $key = $j.PSObject.Properties.Name
+        if ($key -contains 'tmdb_api_key' -and $j.tmdb_api_key) {
+            $tv = [string]$j.tmdb_api_key.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($tv)) {
+                [Environment]::SetEnvironmentVariable('TMDB_API_KEY', $tv, 'Process')
+            }
+        }
+        if ($key -contains 'kinopoisk_cookie' -and $j.kinopoisk_cookie) {
+            $ck = [string]$j.kinopoisk_cookie.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($ck)) {
+                [Environment]::SetEnvironmentVariable('KINOPOISK_COOKIE', $ck, 'Process')
+            }
+        }
+        if ($key -contains 'episode_filename_format' -and $j.episode_filename_format) {
+            $script:UserSettings.episode_filename_format = [string]$j.episode_filename_format
+        }
+        if ($key -contains 'season_folder_format' -and $j.season_folder_format) {
+            $script:UserSettings.season_folder_format = [string]$j.season_folder_format
+        }
+    } catch { }
+}
+
+Import-SeriesToolkitUserSettings
 
 $script:ToolkitVersion = '0.0.0'
 try {
@@ -117,7 +155,22 @@ function Get-TmdbScore([string]$Expected, [string]$CandidateRu, [string]$Candida
     return $score
 }
 
-function Get-SeasonFolderName([int]$SeasonNumber) { return "Сезон $SeasonNumber" }
+function Get-SeasonFolderName([int]$SeasonNumber) {
+    $fmt = $script:UserSettings.season_folder_format
+    if ([string]::IsNullOrWhiteSpace($fmt)) { $fmt = 'Сезон {Season}' }
+    return ($fmt -replace '\{Season\}', ([string][int]$SeasonNumber))
+}
+
+function Format-EpisodeFileBase([string]$SeriesFolderName, [string]$Code, [string]$Title, [int]$Season, [int]$Episode) {
+    $fmt = $script:UserSettings.episode_filename_format
+    if ([string]::IsNullOrWhiteSpace($fmt)) { $fmt = '{Series} - {Code} - {Title}' }
+    $ser = ConvertTo-SafeName $SeriesFolderName
+    $tit = ConvertTo-SafeName $Title
+    $s = $fmt
+    $s = $s.Replace('{Series}', $ser).Replace('{Code}', $Code).Replace('{Title}', $tit)
+    $s = $s.Replace('{Season}', ([string][int]$Season)).Replace('{Episode}', ([string][int]$Episode))
+    return (ConvertTo-SafeName $s)
+}
 
 function Resolve-SeasonFromFolderName([string]$FolderName) {
     if ([string]::IsNullOrWhiteSpace($FolderName)) { return $null }
@@ -488,7 +541,7 @@ function Invoke-PlaceholderTitleRepair([System.IO.DirectoryInfo]$SeriesDir, [has
         }
         elseif ($title -match '^(?i)(?:серия|episode)\s*\d+\s*$') { continue }
         $code = ('S{0:00}E{1:00}' -f $sn, $en)
-        $newBase = ConvertTo-SafeName("$seriesName - $code - $title")
+        $newBase = Format-EpisodeFileBase -SeriesFolderName $SeriesDir.Name -Code $code -Title $title -Season $sn -Episode $en
         if ([string]::IsNullOrWhiteSpace($newBase)) { continue }
         $seasonPath = Join-Path $SeriesDir.FullName (Get-SeasonFolderName $sn)
         $target = Join-Path $seasonPath ($newBase + $f.Extension)
@@ -563,7 +616,7 @@ function Build-RenamePlanForSeries([System.IO.DirectoryInfo]$SeriesDir, [hashtab
         if ([string]::IsNullOrWhiteSpace($title)) { $title = Invoke-TmdbEpisodeNameLookup -SeriesName $seriesName -Season $tag.Season -Episode $tag.Episode }
         if ($title -and $title -notmatch '\p{IsCyrillic}') { $title = $null }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = "Серия $($tag.Episode)" }
-        $newBase = ConvertTo-SafeName("$seriesName - $code - $title")
+        $newBase = Format-EpisodeFileBase -SeriesFolderName $SeriesDir.Name -Code $code -Title $title -Season $tag.Season -Episode $tag.Episode
         if ([string]::IsNullOrWhiteSpace($newBase)) {
             Add-Record -Series $SeriesDir.Name -Action 'skip-file' -Status 'ERROR' -SourcePath $f.FullName -Details 'Пустое целевое имя после sanitize.'
             continue

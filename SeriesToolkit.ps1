@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [ValidateSet('Batch', 'Manual')]
@@ -15,6 +15,10 @@ param(
     [switch]$SkipAutoVersion,
     [switch]$SkipAutoSync
 )
+
+try {
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
+} catch { }
 
 $legacyScript = Join-Path $PSScriptRoot 'SeriesToolkit.Engine.ps1'
 if ($null -eq $legacyScript -or -not (Test-Path -LiteralPath $legacyScript)) {

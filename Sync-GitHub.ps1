@@ -73,5 +73,7 @@ try {
         (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1') `
         (Join-Path $ProjectRoot 'UiStrings.ps1') `
         (Join-Path $ProjectRoot 'Bump-Version.ps1') `
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json') `
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md') `
         --desc "SeriesToolkit auto-sync v$version" | Out-Null
 } catch { }

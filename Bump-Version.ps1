@@ -45,7 +45,7 @@ if (-not (Test-Path -LiteralPath $oldRoot)) {
 }
 $snapshotDir = Join-Path $oldRoot ("SeriesToolkit_v{0}_{1}" -f $oldVersion, (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $snapshotDir -Force | Out-Null
-foreach ($name in @('SeriesToolkit.ps1', 'SeriesToolkit.Engine.ps1', 'Start-SeriesToolkitGui.ps1', 'Start-SeriesToolkitGui.Engine.ps1', 'UiStrings.ps1', 'README.md', 'CHANGELOG.md', 'version.json', 'Build-SeriesToolkitExe.ps1', 'Sync-GitHub.ps1')) {
+foreach ($name in @('SeriesToolkit.ps1', 'SeriesToolkit.Engine.ps1', 'Start-SeriesToolkitGui.ps1', 'Start-SeriesToolkitGui.Engine.ps1', 'UiStrings.ps1', 'README.md', 'CHANGELOG.md', 'version.json', 'Build-SeriesToolkitExe.ps1', 'Sync-GitHub.ps1', 'SeriesToolkit.settings.example.json', 'SeriesToolkit.settings.README.md')) {
     $p = Join-Path $ProjectRoot $name
     if (Test-Path -LiteralPath $p) {
         Copy-Item -LiteralPath $p -Destination (Join-Path $snapshotDir $name) -Force

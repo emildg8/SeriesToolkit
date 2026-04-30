@@ -1,0 +1,6 @@
+{
+  "tmdb_api_key": "",
+  "kinopoisk_cookie": "",
+  "episode_filename_format": "{Series} - {Code} - {Title}",
+  "season_folder_format": "Сезон {Season}"
+}

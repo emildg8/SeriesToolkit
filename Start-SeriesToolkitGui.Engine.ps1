@@ -4,6 +4,10 @@ param(
     [string]$ToolkitRoot = ''
 )
 
+try {
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
+} catch { }
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 

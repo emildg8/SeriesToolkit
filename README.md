@@ -6,10 +6,9 @@
 
 ## Что делает toolkit
 
-- Нормализует папки сезонов в формат `Сезон N`.
+- Нормализует папки сезонов (шаблон по умолчанию `Сезон N`, настраивается).
 - Перемещает файлы в правильные папки сезонов.
-- Переименовывает эпизоды в формат:
-  - `Название сериала - S01E01 - Название эпизода`
+- Переименовывает эпизоды по настраиваемому шаблону (по умолчанию `Название сериала - S01E01 - Название эпизода` — см. `SeriesToolkit.settings.example.json`).
 - Поддерживает источники **русскоязычных** названий эпизодов (в имена файлов попадают только строки **с кириллицей**):
   - локальный HTML (ручной режим),
   - ru.wikipedia (списки эпизодов и расширение через `Fetch-VideoMetadata.ps1`),
@@ -60,12 +59,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Ma
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 ```
 
+При старте GUI и движка для **текущего процесса** выставляется `ExecutionPolicy Bypass`, чтобы dot-source **`UiStrings.ps1`** и **`Fetch-VideoMetadata.ps1`** работали даже при системной политике `Restricted`. При желании глобально: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`.
+
+## Файл настроек (TMDB, cookie Кинопоиска, шаблоны имён)
+
+1. Скопируйте **`SeriesToolkit.settings.example.json`** → **`SeriesToolkit.settings.json`** рядом с `SeriesToolkit.ps1`.
+2. Подробные пояснения — в **`SeriesToolkit.settings.README.md`**.
+3. Кратко:
+   - **`tmdb_api_key`** — ключ TMDB (на время запуска кладётся в переменную процесса).
+   - **`kinopoisk_cookie`** — строка из браузера: **F12 → Сеть → запрос к kinopoisk.ru → Заголовки → `cookie:`** (всё значение одной строкой). То же можно задать через `setx KINOPOISK_COOKIE "..."`.
+   - **`episode_filename_format`** — плейсхолдеры `{Series}`, `{Code}`, `{Title}`, `{Season}`, `{Episode}`.
+   - **`season_folder_format`** — плейсхолдер `{Season}` (осторожно: распознавание старых папок заточено под типичные виды вроде `Сезон 1`).
+
+Файл с секретами **`SeriesToolkit.settings.json`** в корневом `.gitignore` не попадает в git.
+
 ## TMDB
 
 Для получения названий эпизодов с TMDB:
 
 1. Получите API key в TMDB.
-2. Запишите ключ в переменную окружения пользователя:
+2. Либо **`SeriesToolkit.settings.json`** (`tmdb_api_key`), либо переменная окружения:
 
 ```powershell
 setx TMDB_API_KEY "ВАШ_КЛЮЧ"
@@ -78,9 +91,7 @@ setx TMDB_API_KEY "ВАШ_КЛЮЧ"
 Скрипт не обходит юридически значимую защиту (капчу нужно пройти в браузере). Для снижения ложных срабатываний:
 
 1. По умолчанию для HTML Кинопоиска используется **`curl.exe`** (Windows 10+), если не задано `SERIESTOOLKIT_KP_USE_CURL=0`.
-2. После входа на kinopoisk.ru в браузере можно скопировать заголовок **`Cookie`** и записать в переменную пользователя:
-   - `setx KINOPOISK_COOKIE "session=...; ..."`  
-   или `SERIESTOOLKIT_KINOPOISK_COOKIE`.
+2. Cookie: **`SeriesToolkit.settings.json`** → `kinopoisk_cookie`, или `setx KINOPOISK_COOKIE "..."` / `SERIESTOOLKIT_KINOPOISK_COOKIE`. Откуда брать: **Chrome → F12 → Network → любой запрос к kinopoisk.ru → Headers → Request Headers → `cookie:`** (скриншот 2 в вашем запросе — нужна именно эта длинная строка).
 3. Опционально: `setx SERIESTOOLKIT_KP_DELAY_MS 800` — пауза перед запросом (мс).
 4. Если EXE/скрипты лежат нестандартно: `setx SERIESTOOLKIT_ROOT "D:\путь\к\SeriesToolkit"`.
 
