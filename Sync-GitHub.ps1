@@ -54,6 +54,38 @@ function Test-GhReleaseExists {
     }
 }
 
+function Get-ReleaseNotesFromChangelog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $lines = @($raw -split "`r?`n")
+    $header = "## $Version"
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].StartsWith($header, [System.StringComparison]::Ordinal)) {
+            $start = $i + 1
+            break
+        }
+    }
+    if ($start -lt 0) { return $null }
+    $items = [System.Collections.Generic.List[string]]::new()
+    for ($j = $start; $j -lt $lines.Count; $j++) {
+        $ln = [string]$lines[$j]
+        if ($ln -match '^##\s+') { break }
+        if ($ln -match '^\s*-\s+') { [void]$items.Add($ln.Trim()) }
+    }
+    if ($items.Count -eq 0) { return $null }
+    $body = @(
+        "Что добавлено и улучшено в версии ${Version}:",
+        ''
+    ) + @($items)
+    return ($body -join [Environment]::NewLine)
+}
+
 $allowedFiles = @(
     'Build-SeriesToolkitExe.ps1',
     'Bump-Version.ps1',
@@ -156,14 +188,17 @@ if ($version -match '^\d+\.\d+\.\d+$') {
     git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
     if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать zip-архив релиза: $zip" }
 
-    $body = @"
-Автоматический релиз SeriesToolkit $version.
+    $body = Get-ReleaseNotesFromChangelog -Path (Join-Path $ProjectRoot 'CHANGELOG.md') -Version $version
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = @"
+Что добавлено и улучшено в версии ${version}:
 
-Состав:
-- исходники toolkit в состоянии тега $tag;
-- README/CHANGELOG/version.json текущей версии;
-- zip-архив для быстрого тестирования и отката.
+- Автоматический релиз SeriesToolkit $version.
+- Исходники toolkit в состоянии тега $tag.
+- README/CHANGELOG/version.json текущей версии.
+- ZIP-архив для быстрого тестирования и отката.
 "@
+    }
     $releaseExists = Test-GhReleaseExists -Tag $tag -Repo $GitHubRepo
     if ($releaseExists) {
         Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
