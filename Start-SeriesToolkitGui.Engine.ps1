@@ -259,6 +259,18 @@ $lblStatus.Left = 20; $lblStatus.Top = 372; $lblStatus.Width = 880
 $lblStatus.Text = 'Статус: ожидание запуска'
 $lblStatus.ForeColor = [Drawing.Color]::FromArgb(45, 45, 45)
 
+$lblDiag = New-Object Windows.Forms.Label
+$lblDiag.Left = 20; $lblDiag.Top = 392; $lblDiag.Width = 120
+$lblDiag.Text = 'Диагностика'
+$lblDiag.ForeColor = [Drawing.Color]::FromArgb(85, 85, 85)
+
+$tbDiag = New-Object Windows.Forms.TextBox
+$tbDiag.Left = 120; $tbDiag.Top = 388; $tbDiag.Width = 780; $tbDiag.Height = 24
+$tbDiag.ReadOnly = $true
+$tbDiag.BorderStyle = 'FixedSingle'
+$tbDiag.BackColor = [Drawing.Color]::FromArgb(252, 252, 253)
+$tbDiag.Text = '-'
+
 $lblTime = New-Object Windows.Forms.Label
 $lblTime.Left = 20; $lblTime.Top = 332; $lblTime.Width = 390
 $lblTime.Text = 'Старт: -   Прошло: 00:00:00   ETA: -'
@@ -362,10 +374,12 @@ function Update-Layout {
 
     $lblTime.Left = $pad; $lblTime.Top = $btnRowTop; $lblTime.Width = [Math]::Max(220, ($btnMinimize.Left - $pad - $gap))
     $lblStatus.Left = $pad; $lblStatus.Top = 372; $lblStatus.Width = ($fullW - $pad * 2)
-    $lineTop.Left = $pad; $lineTop.Top = 388; $lineTop.Width = ($fullW - $pad * 2)
-    $pbOverall.Left = $pad; $pbOverall.Top = 396; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
-    $lineBottom.Left = $pad; $lineBottom.Top = 446; $lineBottom.Width = ($fullW - $pad * 2)
-    $tbLog.Left = $pad; $tbLog.Top = 420; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
+    $lblDiag.Left = $pad; $lblDiag.Top = 394; $lblDiag.Width = 110
+    $tbDiag.Left = ($lblDiag.Left + $lblDiag.Width + 6); $tbDiag.Top = 390; $tbDiag.Width = ($fullW - $pad - $tbDiag.Left); $tbDiag.Height = 24
+    $lineTop.Left = $pad; $lineTop.Top = 420; $lineTop.Width = ($fullW - $pad * 2)
+    $pbOverall.Left = $pad; $pbOverall.Top = 428; $pbOverall.Width = ($fullW - $pad * 2); $pbOverall.Height = 18
+    $lineBottom.Left = $pad; $lineBottom.Top = 456; $lineBottom.Width = ($fullW - $pad * 2)
+    $tbLog.Left = $pad; $tbLog.Top = 464; $tbLog.Width = ($fullW - $pad * 2); $tbLog.Height = [Math]::Max(120, ($fullH - $tbLog.Top - $pad))
 }
 
 function Refresh-Texts {
@@ -401,6 +415,7 @@ function Refresh-Texts {
     $btnSeries.Text = $script:s.Browse
     $btnHtml.Text = $script:s.Browse
     $btnMinimize.Text = [string]$script:s.Minimize
+    $lblDiag.Text = [string]$script:s.Diagnostics
 }
 
 $cbProfile.Add_SelectedIndexChanged({
@@ -460,6 +475,9 @@ function Append-LogLine([string]$line) {
     if ($line -match '\[SeriesProgress\s+(?<pct>\d+)%') {
         $script:CurrentSeriesPercent = [int]$Matches['pct']
         if ($script:CurrentSeriesPercent -ge 100) { $script:CompletedSeries = [Math]::Max($script:CompletedSeries, $script:CurrentSeriesIndex) }
+    }
+    if ($line -match '\[SeriesToolkit\]\[Diag\]\s+(?<series>.+?)\s+::\s+(?<msg>.+)$') {
+        $tbDiag.Text = ("{0}: {1}" -f $Matches['series'], $Matches['msg'])
     }
     $tbLog.AppendText((Get-Date -Format 'HH:mm:ss') + ' ' + $line + [Environment]::NewLine)
     $tbLog.SelectionStart = $tbLog.TextLength
@@ -616,6 +634,7 @@ $btnRun.Add_Click({
         if (Test-Path -LiteralPath $script:SkipSignalFile) { Remove-Item -LiteralPath $script:SkipSignalFile -Force -ErrorAction SilentlyContinue }
         Set-UiRunningState $true
         $tbLog.Clear()
+        $tbDiag.Text = '-'
         $script:LastActivityAt = Get-Date
         Append-LogLine "Запуск..."
         $lblStatus.Text = 'Статус: выполняется...'
@@ -679,7 +698,7 @@ $btnRun.Add_Click({
     }
 })
 
-$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $cbVerify, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $lineTop, $pbOverall, $lineBottom, $tbLog))
+$form.Controls.AddRange(@($lblLang, $cbLang, $rbBatch, $rbManual, $lblRoot, $tbRoot, $btnRoot, $lblSeries, $tbSeries, $btnSeries, $lblHtml, $tbHtml, $btnHtml, $cbTmdb, $cbDry, $cbVerify, $lblProfile, $cbProfile, $lblProfileHint, $lblTime, $btnMinimize, $btnSkip, $btnPause, $btnStop, $btnRun, $lblStatus, $lblDiag, $tbDiag, $lineTop, $pbOverall, $lineBottom, $tbLog))
 $form.Add_Shown({ Update-Layout })
 $form.Add_SizeChanged({ Update-Layout })
 $timer = New-Object Windows.Forms.Timer

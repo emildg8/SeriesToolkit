@@ -186,6 +186,7 @@ $script:SeriesMetaCache = @{}
 $script:SeriesMetaCachePath = Join-Path $PSScriptRoot 'LOGS\series-meta-cache.json'
 $script:SeriesStageDurations = [System.Collections.Generic.List[object]]::new()
 $script:SeriesAliases = @{}
+$script:LastMetaDiagnostics = ''
 $script:ProgressLogPath = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_PROGRESS_LOG', 'Process')
 $script:TmdbApiKeyEffective = if ($TmdbApiKey) { $TmdbApiKey } else { Get-TmdbApiKeyFromEnvironment }
 $script:TmdbEnabled = -not [string]::IsNullOrWhiteSpace($script:TmdbApiKeyEffective)
@@ -799,49 +800,64 @@ function Get-CombinedEpisodeMergedObjects {
         [switch]$SkipKinopoisk
     )
     if ([string]::IsNullOrWhiteSpace($SeriesName)) { return @() }
+    $diag = [ordered]@{
+        wiki = 'skipped'
+        tmdb = 'skipped'
+        kp   = 'skipped'
+        ddg  = 'skipped'
+        web  = 'skipped'
+    }
 
     $wikiList = $null
     if (-not $SkipWikipedia) {
+        $diag['wiki'] = 'no-match'
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: wikipedia search start" -f $SeriesName)
         try {
             if (Get-Command Get-EpisodesFromWikipediaSearchQueries -ErrorAction SilentlyContinue) {
                 $wikiList = Get-EpisodesFromWikipediaSearchQueries $SeriesName
+                $wc = @($wikiList).Count
+                if ($wc -gt 0) { $diag['wiki'] = "ok($wc)" }
             }
-        } catch { }
+        } catch { $diag['wiki'] = 'error' }
     }
     $wikiArr = @($wikiList)
 
     if ($AggressiveDdg -and (Get-Command Get-EpisodesFromWikipediaAggressiveDdgMerge -ErrorAction SilentlyContinue)) {
+        $diag['ddg'] = 'no-match'
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: aggressive DDG merge start" -f $SeriesName)
         try {
             $ag = Get-EpisodesFromWikipediaAggressiveDdgMerge $SeriesName
             if ($ag -and @($ag).Count -gt 0) {
+                $diag['ddg'] = "ok($(@($ag).Count))"
                 if ($wikiArr.Count -gt 0) {
                     $wikiArr = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($wikiArr) + @($ag)))
                 } else {
                     $wikiArr = @($ag)
                 }
             }
-        } catch { }
+        } catch { $diag['ddg'] = 'error' }
     }
     if ($AggressiveWeb -and (Get-Command Get-EpisodesFromWikipediaAggressiveWebMerge -ErrorAction SilentlyContinue)) {
+        $diag['web'] = 'no-match'
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: aggressive WEB merge start (DDG/Yandex/Google)" -f $SeriesName)
         try {
             $agw = Get-EpisodesFromWikipediaAggressiveWebMerge $SeriesName
             if ($agw -and @($agw).Count -gt 0) {
+                $diag['web'] = "ok($(@($agw).Count))"
                 if ($wikiArr.Count -gt 0) {
                     $wikiArr = @(Convert-EpisodeListToUniqueBySeasonEpisode (@($wikiArr) + @($agw)))
                 } else {
                     $wikiArr = @($agw)
                 }
             }
-        } catch { }
+        } catch { $diag['web'] = 'error' }
     }
 
     Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: TMDB search start" -f $SeriesName)
     $tmdbArr = $null
     $pick = $null
     if ($script:TmdbEnabled -and (Get-Command Search-TmdbTvSeries -ErrorAction SilentlyContinue) -and (Get-Command Get-EpisodesFromTmdbTvSeries -ErrorAction SilentlyContinue)) {
+        $diag['tmdb'] = 'no-match'
         try {
             $results = Search-TmdbTvSeries $SeriesName $script:TmdbApiKeyEffective
             if ($results -and @($results).Count -gt 0) {
@@ -855,10 +871,14 @@ function Get-CombinedEpisodeMergedObjects {
                     $tvId = [int]$pick.id
                     if ($tvId -gt 0) {
                         $tmdbArr = Get-EpisodesFromTmdbTvSeries $tvId $script:TmdbApiKeyEffective
+                        $tc = @($tmdbArr).Count
+                        if ($tc -gt 0) { $diag['tmdb'] = "ok($tc)" }
                     }
                 }
             }
-        } catch { }
+        } catch { $diag['tmdb'] = 'error' }
+    } else {
+        $diag['tmdb'] = 'disabled'
     }
 
     $merged = $null
@@ -880,13 +900,20 @@ function Get-CombinedEpisodeMergedObjects {
 
     $kpArr = $null
     if (-not $SkipKinopoisk) {
+        $diag['kp'] = 'no-match'
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: Kinopoisk verification start" -f $SeriesName)
         if (Get-Command Get-EpisodesFromKinopoiskVerifiedForSeries -ErrorAction SilentlyContinue) {
             try {
                 $ru = if ($pick) { [string]$pick.name } else { $null }
                 $orig = if ($pick) { [string]$pick.original_name } else { $null }
                 $kpArr = Get-EpisodesFromKinopoiskVerifiedForSeries -FolderTitle $SeriesName -TmdbRuName $ru -TmdbOriginalName $orig -MinMatchScore $KinopoiskMinScore
-            } catch { }
+                $kc = @($kpArr).Count
+                if ($kc -gt 0) { $diag['kp'] = "ok($kc)" }
+            } catch {
+                $hint = ''
+                try { $hint = [string]$script:LastResolveHint } catch { }
+                if ($hint -match 'captcha') { $diag['kp'] = 'captcha' } else { $diag['kp'] = 'error' }
+            }
         }
     }
     if ($merged -and @($merged).Count -gt 0 -and $kpArr -and @($kpArr).Count -gt 0 -and (Get-Command Merge-EpisodeTitlesPreferRu -ErrorAction SilentlyContinue)) {
@@ -897,9 +924,11 @@ function Get-CombinedEpisodeMergedObjects {
     }
 
     if ($merged -and @($merged).Count -gt 0) {
+        $script:LastMetaDiagnostics = ($diag.GetEnumerator() | ForEach-Object { "{0}={1}" -f $_.Key, $_.Value }) -join '; '
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: merged episodes={1}" -f $SeriesName, @($merged).Count)
         return @($merged)
     }
+    $script:LastMetaDiagnostics = ($diag.GetEnumerator() | ForEach-Object { "{0}={1}" -f $_.Key, $_.Value }) -join '; '
     Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: merged episodes=0" -f $SeriesName)
     return @()
 }
@@ -1295,6 +1324,11 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
         if ($mergedFirst.Count -gt 0) { Set-SeriesMetaToCache -SeriesName $seriesName -Episodes $mergedFirst }
     }
     Write-SeriesStageTiming -SeriesName $SeriesDir.Name -StageName 'meta_first_pass' -StartedAt $stageMetaStarted
+    if ($mergedFirst.Count -eq 0) {
+        $diagTxt = if ([string]::IsNullOrWhiteSpace($script:LastMetaDiagnostics)) { 'wiki=no-match; tmdb=no-match; kp=no-match' } else { [string]$script:LastMetaDiagnostics }
+        Add-Record -Series $SeriesDir.Name -Action 'meta-diagnostic' -Status 'WARN' -Details ("Нет эпизодов после first-pass. Источники: {0}" -f $diagTxt)
+        Write-ToolkitProgress ("[SeriesToolkit][Diag] {0} :: no-metadata-first-pass :: {1}" -f $SeriesDir.Name, $diagTxt)
+    }
     if (Test-ShouldSkipSeries $SeriesDir) {
         Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
         Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
