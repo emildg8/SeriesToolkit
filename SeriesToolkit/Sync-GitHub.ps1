@@ -21,7 +21,36 @@ if (-not (Test-Path -LiteralPath $PublishRepoPath)) {
     git init "$PublishRepoPath" | Out-Null
 }
 
-Copy-Item -Path (Join-Path $ProjectRoot '*') -Destination $PublishRepoPath -Recurse -Force
+function Ensure-OriginRemote {
+    $remote = (git -C "$PublishRepoPath" remote)
+    if ([string]::IsNullOrWhiteSpace($remote)) {
+        try { & $gh repo view $GitHubRepo | Out-Null; git -C "$PublishRepoPath" remote add origin "https://github.com/$GitHubRepo.git" } catch { }
+    } else {
+        try { git -C "$PublishRepoPath" remote set-url origin "https://github.com/$GitHubRepo.git" } catch { }
+    }
+}
+
+function Invoke-GhOrThrow {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [string]$ErrorContext = 'gh command failed'
+    )
+    & $gh @Arguments | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "$ErrorContext (exit code $LASTEXITCODE): gh $($Arguments -join ' ')"
+    }
+}
+
+$items = @(Get-ChildItem -LiteralPath $ProjectRoot -Force -ErrorAction SilentlyContinue)
+foreach ($it in $items) {
+    if ($it.Name -in @('LOGS', 'OLD')) { continue }
+    Copy-Item -LiteralPath $it.FullName -Destination $PublishRepoPath -Recurse -Force
+}
+# Секреты только локально — никогда не публиковать на GitHub
+foreach ($secret in @('SeriesToolkit.settings.json', '.env', 'secrets.json', 'tmdb.key', 'kinopoisk.cookie.txt')) {
+    $sp = Join-Path $PublishRepoPath $secret
+    if (Test-Path -LiteralPath $sp) { Remove-Item -LiteralPath $sp -Force }
+}
 $parentFetch = Join-Path (Split-Path -Parent $ProjectRoot) 'Fetch-VideoMetadata.ps1'
 if (Test-Path -LiteralPath $parentFetch) {
     Copy-Item -LiteralPath $parentFetch -Destination (Join-Path $PublishRepoPath 'Fetch-VideoMetadata.ps1') -Force
@@ -43,12 +72,7 @@ git -C "$PublishRepoPath" add . | Out-Null
 $changes = (git -C "$PublishRepoPath" status --porcelain)
 if (-not [string]::IsNullOrWhiteSpace($changes)) {
     git -C "$PublishRepoPath" commit -m "Auto sync SeriesToolkit v$version" | Out-Null
-    $remote = (git -C "$PublishRepoPath" remote)
-    if ([string]::IsNullOrWhiteSpace($remote)) {
-        try { & $gh repo view $GitHubRepo | Out-Null; git -C "$PublishRepoPath" remote add origin "https://github.com/$GitHubRepo.git" } catch { }
-    } else {
-        try { git -C "$PublishRepoPath" remote set-url origin "https://github.com/$GitHubRepo.git" } catch { }
-    }
+    Ensure-OriginRemote
     git -C "$PublishRepoPath" push -u origin master | Out-Null
     if (-not [string]::IsNullOrWhiteSpace($SecondaryRemoteUrl) -and -not [string]::IsNullOrWhiteSpace($SecondaryRemoteName)) {
         $remotes = @((git -C "$PublishRepoPath" remote) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -61,19 +85,64 @@ if (-not [string]::IsNullOrWhiteSpace($changes)) {
     }
 }
 
+# Автоматический релиз текущей версии (tag + release + zip asset)
+if ($version -match '^\d+\.\d+\.\d+$') {
+    Ensure-OriginRemote
+    $tag = "v$version"
+    $head = (git -C "$PublishRepoPath" rev-parse HEAD).Trim()
+    $existsTag = (git -C "$PublishRepoPath" tag --list $tag)
+    if ([string]::IsNullOrWhiteSpace($existsTag)) {
+        git -C "$PublishRepoPath" tag $tag $head
+    }
+    git -C "$PublishRepoPath" push origin $tag | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # Разрешаем сценарий, когда tag уже существует в remote.
+        git -C "$PublishRepoPath" fetch --tags origin | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось обновить теги из origin." }
+    }
+
+    $releasesDir = Join-Path $ProjectRoot 'RELEASES'
+    if (-not (Test-Path -LiteralPath $releasesDir)) { New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null }
+    $zip = Join-Path $releasesDir ("SeriesToolkit-{0}.zip" -f $version)
+    if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+    git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать zip-архив релиза: $zip" }
+
+    $body = @"
+Автоматический релиз SeriesToolkit $version.
+
+Состав:
+- исходники toolkit в состоянии тега $tag;
+- README/CHANGELOG/version.json текущей версии;
+- zip-архив для быстрого тестирования и отката.
+"@
+    & $gh release view $tag -R $GitHubRepo *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
+    } else {
+        Invoke-GhOrThrow -Arguments @('release', 'create', $tag, $zip, '-R', $GitHubRepo, '--title', "SeriesToolkit $version", '--notes', $body) -ErrorContext "Не удалось создать release $tag"
+    }
+}
+
 # Обновляем gist: если edit не получится, создаём новый.
 try {
-    & $gh gist create `
-        (Join-Path $ProjectRoot 'README.md') `
-        (Join-Path $ProjectRoot 'CHANGELOG.md') `
-        (Join-Path $ProjectRoot 'version.json') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.ps1') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.Engine.ps1') `
-        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1') `
-        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1') `
-        (Join-Path $ProjectRoot 'UiStrings.ps1') `
-        (Join-Path $ProjectRoot 'Bump-Version.ps1') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json') `
-        (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md') `
-        --desc "SeriesToolkit auto-sync v$version" | Out-Null
+    $gistArgs = @(
+        (Join-Path $ProjectRoot 'README.md'),
+        (Join-Path $ProjectRoot 'CHANGELOG.md'),
+        (Join-Path $ProjectRoot 'version.json'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.ps1'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.Engine.ps1'),
+        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.ps1'),
+        (Join-Path $ProjectRoot 'Start-SeriesToolkitGui.Engine.ps1'),
+        (Join-Path $ProjectRoot 'UiStrings.ps1'),
+        (Join-Path $ProjectRoot 'Bump-Version.ps1'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.example.json'),
+        (Join-Path $ProjectRoot 'SeriesToolkit.settings.README.md')
+    )
+    foreach ($extra in @('docs/SCREENSHOTS-RU.md')) {
+        $ep = Join-Path $ProjectRoot $extra
+        if (Test-Path -LiteralPath $ep) { $gistArgs += $ep }
+    }
+    & $gh gist create @gistArgs `
+        --desc "SeriesToolkit v$version — см. репозиторий github.com/emildg8/SeriesToolkit" | Out-Null
 } catch { }
