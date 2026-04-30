@@ -30,6 +30,17 @@ function Ensure-OriginRemote {
     }
 }
 
+function Invoke-GhOrThrow {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [string]$ErrorContext = 'gh command failed'
+    )
+    & $gh @Arguments | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "$ErrorContext (exit code $LASTEXITCODE): gh $($Arguments -join ' ')"
+    }
+}
+
 $items = @(Get-ChildItem -LiteralPath $ProjectRoot -Force -ErrorAction SilentlyContinue)
 foreach ($it in $items) {
     if ($it.Name -in @('LOGS', 'OLD')) { continue }
@@ -75,24 +86,29 @@ if (-not [string]::IsNullOrWhiteSpace($changes)) {
 }
 
 # Автоматический релиз текущей версии (tag + release + zip asset)
-try {
-    if ($version -match '^\d+\.\d+\.\d+$') {
-        Ensure-OriginRemote
-        $tag = "v$version"
-        $head = (git -C "$PublishRepoPath" rev-parse HEAD).Trim()
-        $existsTag = (git -C "$PublishRepoPath" tag --list $tag)
-        if ([string]::IsNullOrWhiteSpace($existsTag)) {
-            git -C "$PublishRepoPath" tag $tag $head
-        }
-        git -C "$PublishRepoPath" push origin $tag | Out-Null
+if ($version -match '^\d+\.\d+\.\d+$') {
+    Ensure-OriginRemote
+    $tag = "v$version"
+    $head = (git -C "$PublishRepoPath" rev-parse HEAD).Trim()
+    $existsTag = (git -C "$PublishRepoPath" tag --list $tag)
+    if ([string]::IsNullOrWhiteSpace($existsTag)) {
+        git -C "$PublishRepoPath" tag $tag $head
+    }
+    git -C "$PublishRepoPath" push origin $tag | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # Разрешаем сценарий, когда tag уже существует в remote.
+        git -C "$PublishRepoPath" fetch --tags origin | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось обновить теги из origin." }
+    }
 
-        $releasesDir = Join-Path $ProjectRoot 'RELEASES'
-        if (-not (Test-Path -LiteralPath $releasesDir)) { New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null }
-        $zip = Join-Path $releasesDir ("SeriesToolkit-{0}.zip" -f $version)
-        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-        git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
+    $releasesDir = Join-Path $ProjectRoot 'RELEASES'
+    if (-not (Test-Path -LiteralPath $releasesDir)) { New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null }
+    $zip = Join-Path $releasesDir ("SeriesToolkit-{0}.zip" -f $version)
+    if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+    git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать zip-архив релиза: $zip" }
 
-        $body = @"
+    $body = @"
 Автоматический релиз SeriesToolkit $version.
 
 Состав:
@@ -100,14 +116,13 @@ try {
 - README/CHANGELOG/version.json текущей версии;
 - zip-архив для быстрого тестирования и отката.
 "@
-        & $gh release view $tag -R $GitHubRepo *> $null
-        if ($LASTEXITCODE -eq 0) {
-            & $gh release upload $tag $zip -R $GitHubRepo --clobber | Out-Null
-        } else {
-            & $gh release create $tag $zip -R $GitHubRepo --title "SeriesToolkit $version" --notes $body | Out-Null
-        }
+    & $gh release view $tag -R $GitHubRepo *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
+    } else {
+        Invoke-GhOrThrow -Arguments @('release', 'create', $tag, $zip, '-R', $GitHubRepo, '--title', "SeriesToolkit $version", '--notes', $body) -ErrorContext "Не удалось создать release $tag"
     }
-} catch { }
+}
 
 # Обновляем gist: если edit не получится, создаём новый.
 try {
