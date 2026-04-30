@@ -141,6 +141,43 @@ function Write-SeriesProgress([string]$SeriesName, [string]$Stage, [int]$Index, 
     Write-ToolkitProgress ("[SeriesToolkit][SeriesProgress {0}% {1}/{2}] {3} :: {4}" -f $pct, $Index, $Total, $SeriesName, $Stage)
 }
 
+$script:SkipSignalFile = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_SKIP_FILE', 'Process')
+
+function Test-ShouldSkipSeries([System.IO.DirectoryInfo]$SeriesDir) {
+    if ([string]::IsNullOrWhiteSpace($script:SkipSignalFile)) { return $false }
+    if (-not (Test-Path -LiteralPath $script:SkipSignalFile)) { return $false }
+    try {
+        $targets = @(Get-Content -LiteralPath $script:SkipSignalFile -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+        if ($targets.Count -eq 0) { return $false }
+        $full = $SeriesDir.FullName.Trim().ToLowerInvariant()
+        $name = $SeriesDir.Name.Trim().ToLowerInvariant()
+        foreach ($t in $targets) {
+            $x = ([string]$t).Trim().ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($x)) { continue }
+            if ($x -eq $full -or $x -eq $name) { return $true }
+        }
+    } catch { }
+    return $false
+}
+
+function Clear-SkipMarker([System.IO.DirectoryInfo]$SeriesDir) {
+    if ([string]::IsNullOrWhiteSpace($script:SkipSignalFile)) { return }
+    if (-not (Test-Path -LiteralPath $script:SkipSignalFile)) { return }
+    try {
+        $full = $SeriesDir.FullName.Trim().ToLowerInvariant()
+        $name = $SeriesDir.Name.Trim().ToLowerInvariant()
+        $left = @()
+        foreach ($ln in @(Get-Content -LiteralPath $script:SkipSignalFile -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+            $x = ([string]$ln).Trim()
+            if ([string]::IsNullOrWhiteSpace($x)) { continue }
+            $lx = $x.ToLowerInvariant()
+            if ($lx -eq $full -or $lx -eq $name) { continue }
+            $left += $x
+        }
+        Set-Content -LiteralPath $script:SkipSignalFile -Value $left -Encoding UTF8
+    } catch { }
+}
+
 function Add-Record {
     param(
         [string]$Series, [string]$Action, [string]$Status = 'OK',
@@ -963,14 +1000,32 @@ function Remove-EmptyDirectories([System.IO.DirectoryInfo]$SeriesDir) {
 }
 
 function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
     Write-ToolkitProgress ("[SeriesToolkit] Обработка: {0}" -f $SeriesDir.FullName)
     $seriesTotalStages = 8
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Старт обработки' -Index 0 -Total $seriesTotalStages
     Normalize-SeasonFolderNames -SeriesDir $SeriesDir
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Нормализация папок сезонов' -Index 1 -Total $seriesTotalStages
     $seriesName = ConvertTo-SafeName $SeriesDir.Name
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных (Wiki/TMDB/KP)' -Index 2 -Total $seriesTotalStages
     $mergedFirst = @(Get-CombinedEpisodeMergedObjects -SeriesName $seriesName -KinopoiskMinScore 120)
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных завершён' -Index 3 -Total $seriesTotalStages
     Invoke-SeasonLibraryScaffold -SeriesDir $SeriesDir -MergedEpisodes $mergedFirst
     $mapFromNet = @{}
@@ -984,6 +1039,12 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     Ensure-SeasonFolders -Plan $plan -SeriesName $SeriesDir.Name
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Применение плана' -Index 5 -Total $seriesTotalStages
     Apply-Plan -Plan $plan
+    if (Test-ShouldSkipSeries $SeriesDir) {
+        Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
+        Add-Record -Series $SeriesDir.Name -Action 'skip-series' -Status 'WARN' -SourcePath $SeriesDir.FullName -Details 'Пропущено пользователем из GUI.'
+        Clear-SkipMarker $SeriesDir
+        return
+    }
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Ремонт заглушек Серия N' -Index 6 -Total $seriesTotalStages
     Invoke-PlaceholderTitleRepair -SeriesDir $SeriesDir -EpisodeTitlesMap $allTitles
     Remove-EmptyDirectories -SeriesDir $SeriesDir
