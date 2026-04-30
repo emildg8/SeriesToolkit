@@ -71,6 +71,7 @@ $script:UserSettings = @{
     metadata_cache_force_refresh = $false
     metadata_request_timeout_sec = 60
     metadata_web_search_engines = @('ddg', 'yandex', 'google')
+    batch_max_parallel = 1
     rename_min_confidence_apply = 75
     series_aliases_file = 'series-aliases.json'
     metadata_enable_stage_timing = $true
@@ -132,6 +133,9 @@ function Import-SeriesToolkitUserSettings {
                 if ($x -in @('ddg', 'yandex', 'google')) { $arr += $x }
             }
             if ($arr.Count -gt 0) { $script:UserSettings.metadata_web_search_engines = @($arr | Select-Object -Unique) }
+        }
+        if ($key -contains 'batch_max_parallel' -and $null -ne $j.batch_max_parallel) {
+            $script:UserSettings.batch_max_parallel = [int]$j.batch_max_parallel
         }
         if ($key -contains 'rename_min_confidence_apply' -and $null -ne $j.rename_min_confidence_apply) {
             $script:UserSettings.rename_min_confidence_apply = [int]$j.rename_min_confidence_apply
@@ -226,6 +230,8 @@ function Import-SeriesMetaCache {
 }
 
 function Save-SeriesMetaCache {
+    $disable = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_DISABLE_CACHE_WRITE', 'Process')
+    if ($disable -eq '1' -or $disable -eq 'true') { return }
     try {
         $dir = Split-Path -Parent $script:SeriesMetaCachePath
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -356,6 +362,13 @@ function Get-RenameMinConfidenceApply {
     $v = [int]$script:UserSettings.rename_min_confidence_apply
     if ($v -lt 0) { $v = 0 }
     if ($v -gt 100) { $v = 100 }
+    return $v
+}
+
+function Get-BatchMaxParallel {
+    $v = [int]$script:UserSettings.batch_max_parallel
+    if ($v -lt 1) { $v = 1 }
+    if ($v -gt 4) { $v = 4 }
     return $v
 }
 
@@ -1275,6 +1288,53 @@ function Remove-EmptyDirectories([System.IO.DirectoryInfo]$SeriesDir) {
     }
 }
 
+function Start-ManualSeriesWorkerProcess {
+    param(
+        [Parameter(Mandatory = $true)][System.IO.DirectoryInfo]$SeriesDir,
+        [Parameter(Mandatory = $true)][string]$EngineScriptPath
+    )
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $psExe)) { $psExe = 'powershell.exe' }
+    $args = [System.Collections.Generic.List[string]]::new()
+    foreach ($x in @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $EngineScriptPath, '-Mode', 'Manual', '-SeriesPath', $SeriesDir.FullName, '-ReferenceRootPath', $ReferenceRootPath, '-ExecutionProfile', (Get-ExecutionProfileResolved), '-LogDirectory', $LogDirectory)) {
+        [void]$args.Add([string]$x)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($HtmlPath)) {
+        [void]$args.Add('-HtmlPath')
+        [void]$args.Add([string]$HtmlPath)
+    }
+    if ($UseTmdb) { [void]$args.Add('-UseTmdb') }
+    if (-not [string]::IsNullOrWhiteSpace($TmdbApiKey)) {
+        [void]$args.Add('-TmdbApiKey')
+        [void]$args.Add([string]$TmdbApiKey)
+    }
+    if ($VerifyOnly) {
+        [void]$args.Add('-VerifyOnly')
+    } elseif ($DryRun) {
+        [void]$args.Add('-DryRun')
+    } else {
+        [void]$args.Add('-Apply')
+    }
+    $quoted = @()
+    foreach ($a in $args) {
+        $v = [string]$a
+        if ($v -match '[\s"]') { $v = '"' + ($v -replace '"', '\"') + '"' }
+        $quoted += $v
+    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $psExe
+    $psi.Arguments = ($quoted -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $false
+    $psi.RedirectStandardError = $false
+    $psi.EnvironmentVariables['SERIESTOOLKIT_DISABLE_CACHE_WRITE'] = '1'
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+    [void]$p.Start()
+    return $p
+}
+
 function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles) {
     if (Test-ShouldSkipSeries $SeriesDir) {
         Write-ToolkitProgress ("[SeriesToolkit][Skip] Пропущено по запросу пользователя: {0}" -f $SeriesDir.FullName)
@@ -1303,11 +1363,9 @@ function Run-Series([System.IO.DirectoryInfo]$SeriesDir, [hashtable]$HtmlTitles)
     Write-SeriesProgress -SeriesName $SeriesDir.Name -Stage 'Сбор метаданных (Wiki/TMDB/KP)' -Index 2 -Total $seriesTotalStages
     $stageMetaStarted = Get-Date
     $mergedFirst = @()
-    $cacheUsed = $false
     $cached = @(Get-SeriesMetaFromCache -SeriesName $seriesName)
     if ($cached.Count -gt 0) {
         $mergedFirst = $cached
-        $cacheUsed = $true
         Write-ToolkitProgress ("[SeriesToolkit][Meta] {0} :: cache hit episodes={1}" -f $seriesName, $mergedFirst.Count)
     } else {
         foreach ($query in $seriesQueryCandidates) {
@@ -1478,12 +1536,44 @@ if ($Mode -eq 'Manual') {
     if ($seriesRoots.Count -eq 0) {
         Add-Record -Series '-' -Action 'library-scan' -Status 'WARN' -SourcePath $RootPath -Details 'Не найдено папок сериалов (нет видео/сезонов или пустой каталог).'
     }
-    $idx = 0
-    foreach ($sd in $seriesRoots) {
-        $idx++
-        $pct = [int][Math]::Floor(($idx * 100.0) / [Math]::Max($seriesRoots.Count, 1))
-        Write-ToolkitProgress ("[SeriesToolkit][LibraryProgress {0}% {1}/{2}] {3}" -f $pct, $idx, $seriesRoots.Count, $sd.FullName)
-        Run-Series -SeriesDir $sd -HtmlTitles $htmlTitles
+    $maxParallel = Get-BatchMaxParallel
+    $parallelEnabled = ($maxParallel -gt 1 -and ($DryRun -or $VerifyOnly))
+    if ($parallelEnabled) {
+        Add-Record -Series '-' -Action 'batch-parallel' -Status 'INFO' -Details ("Параллельный Batch включён: workers={0}; режим={1}" -f $maxParallel, (if ($VerifyOnly) { 'VerifyOnly' } else { 'DryRun' }))
+        Write-ToolkitProgress ("[SeriesToolkit][Parallel] Batch workers={0} (DryRun/VerifyOnly guardrail)" -f $maxParallel)
+        $engineScriptPath = $PSCommandPath
+        $running = [System.Collections.Generic.List[object]]::new()
+        $nextIndex = 0
+        $completed = 0
+        while ($nextIndex -lt $seriesRoots.Count -or $running.Count -gt 0) {
+            while ($nextIndex -lt $seriesRoots.Count -and $running.Count -lt $maxParallel) {
+                $sd = $seriesRoots[$nextIndex]
+                $nextIndex++
+                $proc = Start-ManualSeriesWorkerProcess -SeriesDir $sd -EngineScriptPath $engineScriptPath
+                [void]$running.Add([PSCustomObject]@{ proc = $proc; series = $sd.FullName })
+                Write-ToolkitProgress ("[SeriesToolkit][Parallel] started PID={0} :: {1}" -f $proc.Id, $sd.FullName)
+            }
+            for ($i = $running.Count - 1; $i -ge 0; $i--) {
+                $w = $running[$i]
+                if (-not $w.proc.HasExited) { continue }
+                $completed++
+                $pct = [int][Math]::Floor(($completed * 100.0) / [Math]::Max($seriesRoots.Count, 1))
+                $code = [int]$w.proc.ExitCode
+                $status = if ($code -eq 0) { 'OK' } else { 'WARN' }
+                Add-Record -Series '-' -Action 'batch-parallel-worker-exit' -Status $status -SourcePath $w.series -Details ("pid={0}; exit={1}" -f $w.proc.Id, $code)
+                Write-ToolkitProgress ("[SeriesToolkit][LibraryProgress {0}% {1}/{2}] {3}" -f $pct, $completed, $seriesRoots.Count, $w.series)
+                [void]$running.RemoveAt($i)
+            }
+            if ($running.Count -gt 0) { Start-Sleep -Milliseconds 220 }
+        }
+    } else {
+        $idx = 0
+        foreach ($sd in $seriesRoots) {
+            $idx++
+            $pct = [int][Math]::Floor(($idx * 100.0) / [Math]::Max($seriesRoots.Count, 1))
+            Write-ToolkitProgress ("[SeriesToolkit][LibraryProgress {0}% {1}/{2}] {3}" -f $pct, $idx, $seriesRoots.Count, $sd.FullName)
+            Run-Series -SeriesDir $sd -HtmlTitles $htmlTitles
+        }
     }
 }
 

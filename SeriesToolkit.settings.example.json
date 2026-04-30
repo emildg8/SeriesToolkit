@@ -10,6 +10,7 @@
   "metadata_cache_force_refresh": false,
   "metadata_request_timeout_sec": 60,
   "metadata_web_search_engines": ["ddg", "yandex", "google"],
+  "batch_max_parallel": 1,
   "rename_min_confidence_apply": 75,
   "series_aliases_file": "series-aliases.json",
   "metadata_enable_stage_timing": true,

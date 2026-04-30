@@ -94,6 +94,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Ba
 powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -VerifyOnly -ExecutionProfile Full
 ```
 
+Для ускоренного пакетного предпросмотра можно включить ограниченный параллелизм через `batch_max_parallel` (до `4`, только `DryRun/VerifyOnly`).
+
 **Боевой:**
 
 ```powershell
