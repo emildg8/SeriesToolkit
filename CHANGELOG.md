@@ -7,6 +7,7 @@
 - Диагностика GUI: добавлен `gui-session-*.log` с причинами закрытия/исключениями.
 - EXE-сборка: добавлена иконка приложения (`assets/SeriesToolkit.icon.ico`) и авто-ротация `SeriesToolkit.GUI.exe -> .bak`.
 - Публикация: `Sync-GitHub.ps1` теперь автоматически создаёт/обновляет GitHub Release `vX.Y.Z` и прикрепляет ZIP-архив версии.
+- Документация: в `README.md` и `docs/SCREENSHOTS-RU.md` обновлены реальные скриншоты GUI (`docs/images/01-gui-main.png`, `docs/images/02-dryrun-summary.png`).
 
 
 

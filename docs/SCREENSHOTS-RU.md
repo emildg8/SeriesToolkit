@@ -8,7 +8,7 @@
 2. Снимите окно целиком: видны поле «корень библиотеки», режим Batch/Manual, галочки DryRun/TMDB.
 3. Желательно, чтобы уже были видны кнопки `Пауза`, `Стоп` и строка статуса.
 
-**Имя файла:** `01-gui-main.png`
+**Имя файла:** `01-gui-main.png` (уже добавлен в `docs/images/01-gui-main.png`)
 
 ## 2. Успешный dry-run в GUI с прогрессом
 
@@ -18,7 +18,7 @@
    - `SeriesProgress ...`
    - `последняя активность Nс назад`.
 
-**Имя файла:** `02-dryrun-summary.png`
+**Имя файла:** `02-dryrun-summary.png` (уже добавлен в `docs/images/02-dryrun-summary.png`)
 
 ## 3. Cookie Кинопоиска (без секретов!)
 
@@ -41,6 +41,7 @@
 
 ```markdown
 ![GUI](docs/images/01-gui-main.png)
+![DryRun](docs/images/02-dryrun-summary.png)
 ```
 
 после того как файлы появятся в репозитории.

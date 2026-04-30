@@ -25,9 +25,10 @@ SeriesToolkit как раз это делает и пишет подробный
 
 ## Как это выглядит (GUI)
 
-Иллюстрация интерфейса (макет для документации):
+Актуальные скриншоты интерфейса:
 
-![Окно SeriesToolkit GUI](docs/gui-mockup.png)
+![Окно SeriesToolkit GUI](docs/images/01-gui-main.png)
+![DryRun с прогрессом](docs/images/02-dryrun-summary.png)
 
 Как сделать **настоящие** скриншоты у себя — пошагово: [docs/SCREENSHOTS-RU.md](docs/SCREENSHOTS-RU.md).
 

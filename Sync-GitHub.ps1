@@ -30,7 +30,11 @@ function Ensure-OriginRemote {
     }
 }
 
-Copy-Item -Path (Join-Path $ProjectRoot '*') -Destination $PublishRepoPath -Recurse -Force
+$items = @(Get-ChildItem -LiteralPath $ProjectRoot -Force -ErrorAction SilentlyContinue)
+foreach ($it in $items) {
+    if ($it.Name -in @('LOGS', 'OLD')) { continue }
+    Copy-Item -LiteralPath $it.FullName -Destination $PublishRepoPath -Recurse -Force
+}
 # Секреты только локально — никогда не публиковать на GitHub
 foreach ($secret in @('SeriesToolkit.settings.json', '.env', 'secrets.json', 'tmdb.key', 'kinopoisk.cookie.txt')) {
     $sp = Join-Path $PublishRepoPath $secret
