@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "meta": {
+    "description": "Политика сортировки входящего видео (пример под \\\\Emilian_TNAS\\emildg8)",
+    "updatedAt": "2026-05-04"
+  },
+  "nasShareRoot": "\\\\Emilian_TNAS\\emildg8",
+  "inboxRelative": "Video\\Sort",
+  "destinations": {
+    "series": "Video\\Сериалы",
+    "cartoons": "Video\\Мультсериалы",
+    "movies": "Video\\Фильмы",
+    "review": "Video\\_SortReview"
+  },
+  "preferCartoonsSubfolder": false,
+  "displayNames": {
+    "tmdbLanguage": "ru-RU",
+    "preferCyrillic": true
+  },
+  "episodeTitleFallback": "Серия {0}",
+  "blurayRemux": {
+    "enabled": true
+  },
+  "seasonFolderFormat": "Сезон {0}",
+  "videoExtensions": [ "mkv", "mp4", "avi", "m4v", "mov", "wmv", "webm", "mpeg", "mpg" ],
+  "filenameTemplates": {
+    "series": "{Series} - S{Season:D2}E{Episode:D2} - {Title}.{Ext}",
+    "movie": "{Title}.{Ext}"
+  }
+}

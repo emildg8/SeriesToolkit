@@ -10,8 +10,11 @@ param(
     [string]$LogDirectory = '',
     [switch]$Apply,
     [switch]$DryRun,
+    [switch]$VerifyOnly,
     [switch]$UseTmdb,
     [string]$TmdbApiKey = '',
+    [ValidateSet('Fast', 'Balanced', 'Full')]
+    [string]$ExecutionProfile = 'Balanced',
     [switch]$SkipAutoVersion,
     [switch]$SkipAutoSync,
     [switch]$SkipAutoBuildExe

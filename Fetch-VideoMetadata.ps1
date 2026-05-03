@@ -1,5 +1,5 @@
 ﻿#requires -Version 5.1
-# Dot-source from Script_Rename_ALLVideo_*.ps1. Returns list of @{ season; episode; title } or $null.
+# Dot-source from SeriesToolkit (SeriesToolkit.Engine.ps1) или legacy Script_Rename_ALLVideo_*.ps1. Возвращает список @{ season; episode; title } или $null.
 
 $script:FetchUserAgent = 'RenameSeriesToolkit/1.0 (Windows; PowerShell)'
 $script:LastResolveHint = ''
@@ -22,9 +22,18 @@ function Initialize-WebClient {
     } catch { }
 }
 
+function Get-SeriesToolkitMetadataTimeoutSec([int]$Default = 60) {
+    $raw = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_METADATA_TIMEOUT_SEC', 'Process')
+    $v = 0
+    if ([int]::TryParse($raw, [ref]$v) -and $v -ge 10 -and $v -le 300) {
+        return $v
+    }
+    return $Default
+}
+
 function Get-UrlText([string]$Uri) {
     Initialize-WebClient
-    $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 60
+    $r = Invoke-WebRequest -Uri $Uri -UseBasicParsing -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 60)
     return $r.Content
 }
 
@@ -1222,6 +1231,149 @@ function Search-TmdbTvSeries([string]$Query, [string]$ApiKey, [string]$Language 
     return @($resp.results)
 }
 
+# Поиск фильма по строке (TMDB). Возвращает массив объектов API (id, title, original_title, release_date, popularity).
+function Search-TmdbMovie([string]$Query, [string]$ApiKey, [string]$Language = 'ru-RU') {
+    if ([string]::IsNullOrWhiteSpace($Query) -or [string]::IsNullOrWhiteSpace($ApiKey)) { return @() }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $qEnc = [uri]::EscapeDataString($Query.Trim())
+    $langEnc = [uri]::EscapeDataString($Language)
+    $uri = "https://api.themoviedb.org/3/search/movie?api_key=$keyEnc&language=$langEnc&query=$qEnc"
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec 60
+    } catch {
+        return @()
+    }
+    if (-not $resp -or -not $resp.results) { return @() }
+    return @($resp.results)
+}
+
+# Есть ли в строке кириллица (для выбора русского отображаемого названия).
+function Test-TmdbTitleHasCyrillic([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    return [regex]::IsMatch($Text, '[\u0400-\u04FF]')
+}
+
+function Get-TmdbTvDetailsLocalized([int]$TvId, [string]$ApiKey, [string]$Language = 'ru-RU') {
+    if ($TvId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $langEnc = [uri]::EscapeDataString($Language)
+    $uri = "https://api.themoviedb.org/3/tv/$TvId`?api_key=$keyEnc&language=$langEnc"
+    try {
+        return Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 90)
+    } catch {
+        return $null
+    }
+}
+
+function Get-TmdbTvAlternativeTitlesRaw([int]$TvId, [string]$ApiKey) {
+    if ($TvId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return @() }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $uri = "https://api.themoviedb.org/3/tv/$TvId/alternative_titles?api_key=$keyEnc"
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 60)
+    } catch {
+        return @()
+    }
+    if (-not $resp) { return @() }
+    $pn = $resp.PSObject.Properties.Name
+    if ($pn -contains 'results' -and $null -ne $resp.results) { return @($resp.results) }
+    return @()
+}
+
+# Лучшее русское отображаемое имя сериала: ru-RU name, иначе alternative RU, иначе name из ru-деталей.
+function Get-TmdbTvResolvedRuDisplayName([int]$TvId, [string]$ApiKey) {
+    $tv = Get-TmdbTvDetailsLocalized -TvId $TvId -ApiKey $ApiKey -Language 'ru-RU'
+    if (-not $tv) { return $null }
+    $name = ''
+    if ($tv.PSObject.Properties.Name -contains 'name') { $name = [string]$tv.name }
+    if (Test-TmdbTitleHasCyrillic $name) { return $name.Trim() }
+    foreach ($alt in Get-TmdbTvAlternativeTitlesRaw -TvId $TvId -ApiKey $ApiKey) {
+        $iso = if ($alt.PSObject.Properties.Name -contains 'iso_3166_1') { [string]$alt.iso_3166_1 } else { '' }
+        if ($iso -ne 'RU') { continue }
+        $t = if ($alt.PSObject.Properties.Name -contains 'title') { [string]$alt.title } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($t) -and (Test-TmdbTitleHasCyrillic $t)) { return $t.Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($name)) { return $name.Trim() }
+    return $null
+}
+
+function Get-TmdbMovieDetailsLocalized([int]$MovieId, [string]$ApiKey, [string]$Language = 'ru-RU') {
+    if ($MovieId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $langEnc = [uri]::EscapeDataString($Language)
+    $uri = "https://api.themoviedb.org/3/movie/$MovieId`?api_key=$keyEnc&language=$langEnc"
+    try {
+        return Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 90)
+    } catch {
+        return $null
+    }
+}
+
+function Get-TmdbMovieAlternativeTitlesRaw([int]$MovieId, [string]$ApiKey) {
+    if ($MovieId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return @() }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $uri = "https://api.themoviedb.org/3/movie/$MovieId/alternative_titles?api_key=$keyEnc"
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 60)
+    } catch {
+        return @()
+    }
+    if (-not $resp) { return @() }
+    $pn = $resp.PSObject.Properties.Name
+    # У фильмов TMDB v3 отдаёт массив `titles`, не `results`.
+    if ($pn -contains 'titles' -and $null -ne $resp.titles) { return @($resp.titles) }
+    if ($pn -contains 'results' -and $null -ne $resp.results) { return @($resp.results) }
+    return @()
+}
+
+function Get-TmdbMovieResolvedRuTitle([int]$MovieId, [string]$ApiKey) {
+    $m = Get-TmdbMovieDetailsLocalized -MovieId $MovieId -ApiKey $ApiKey -Language 'ru-RU'
+    if (-not $m) { return $null }
+    $title = ''
+    if ($m.PSObject.Properties.Name -contains 'title') { $title = [string]$m.title }
+    if (Test-TmdbTitleHasCyrillic $title) { return $title.Trim() }
+    foreach ($alt in Get-TmdbMovieAlternativeTitlesRaw -MovieId $MovieId -ApiKey $ApiKey) {
+        $iso = if ($alt.PSObject.Properties.Name -contains 'iso_3166_1') { [string]$alt.iso_3166_1 } else { '' }
+        if ($iso -ne 'RU') { continue }
+        $t = if ($alt.PSObject.Properties.Name -contains 'title') { [string]$alt.title } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($t) -and (Test-TmdbTitleHasCyrillic $t)) { return $t.Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($title)) { return $title.Trim() }
+    return $null
+}
+
+# Эпизоды одного сезона (ru-RU). Возвращает hashtable: ключ — номер эпизода (строка), значение — название.
+function Get-TmdbTvSeasonEpisodeTitleMap([int]$TvId, [int]$SeasonNumber, [string]$ApiKey, [string]$Language = 'ru-RU') {
+    $map = @{}
+    if ($TvId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return $map }
+    if ($SeasonNumber -lt 0) { return $map }
+    Initialize-WebClient
+    $keyEnc = [uri]::EscapeDataString($ApiKey)
+    $langEnc = [uri]::EscapeDataString($Language)
+    $uri = "https://api.themoviedb.org/3/tv/$TvId/season/$SeasonNumber`?api_key=$keyEnc&language=$langEnc"
+    try {
+        $se = Invoke-RestMethod -Uri $uri -Headers @{ 'User-Agent' = $script:FetchUserAgent } -TimeoutSec (Get-SeriesToolkitMetadataTimeoutSec 90)
+    } catch {
+        return $map
+    }
+    if (-not $se) { return $map }
+    if ($se.PSObject.Properties.Name -notcontains 'episodes' -or $null -eq $se.episodes) { return $map }
+    foreach ($ep in @($se.episodes)) {
+        if ($ep.PSObject.Properties.Name -notcontains 'episode_number') { continue }
+        $en = [int]$ep.episode_number
+        if ($en -le 0) { continue }
+        $ti = if ($ep.PSObject.Properties.Name -contains 'name') { [string]$ep.name } else { '' }
+        if ([string]::IsNullOrWhiteSpace($ti)) { $ti = "Episode $en" }
+        $map[[string]$en] = $ti.Trim()
+    }
+    return $map
+}
+
 function Get-EpisodesFromTmdbTvSeries([int]$TvId, [string]$ApiKey) {
     if ($TvId -le 0) { return $null }
     if ([string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
@@ -1364,6 +1516,70 @@ function Search-DuckDuckGoHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max =
     return @(@($found) | Select-Object -First $Max)
 }
 
+function Search-YandexHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return @() }
+    Initialize-WebClient
+    $enc = [uri]::EscapeDataString($SearchQuery.Trim())
+    $uri = "https://yandex.ru/search/?text=$enc"
+    try {
+        $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -Headers @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept-Language' = 'ru-RU,ru;q=0.9'
+        } -TimeoutSec 55
+    } catch { return @() }
+    if (-not $r -or [string]::IsNullOrWhiteSpace($r.Content)) { return @() }
+    $html = $r.Content
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in [regex]::Matches($html, 'https?://ru\.wikipedia\.org/wiki/[^\s"''<>]+')) {
+        [void]$found.Add((($m.Value -split '\?')[0]))
+    }
+    foreach ($m in [regex]::Matches($html, 'https?%3A%2F%2Fru\.wikipedia\.org%2Fwiki%2F[^"&<>]+')) {
+        try {
+            $decoded = [uri]::UnescapeDataString($m.Value)
+            [void]$found.Add((($decoded -split '\?')[0]))
+        } catch { }
+    }
+    return @(@($found) | Select-Object -First $Max)
+}
+
+function Search-GoogleHtmlForWikipediaUrls([string]$SearchQuery, [int]$Max = 14) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return @() }
+    Initialize-WebClient
+    $enc = [uri]::EscapeDataString($SearchQuery.Trim())
+    $uri = "https://www.google.com/search?q=$enc&hl=ru"
+    try {
+        $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -Headers @{
+            'User-Agent'      = $script:KinopoiskBrowserUserAgent
+            'Accept-Language' = 'ru-RU,ru;q=0.9'
+        } -TimeoutSec 55
+    } catch { return @() }
+    if (-not $r -or [string]::IsNullOrWhiteSpace($r.Content)) { return @() }
+    $html = $r.Content
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in [regex]::Matches($html, '/url\?q=(https?://ru\.wikipedia\.org/wiki/[^&"''<>]+)')) {
+        try {
+            $decoded = [uri]::UnescapeDataString($m.Groups[1].Value)
+            [void]$found.Add((($decoded -split '\?')[0]))
+        } catch { }
+    }
+    foreach ($m in [regex]::Matches($html, 'https?://ru\.wikipedia\.org/wiki/[^\s"''<>]+')) {
+        [void]$found.Add((($m.Value -split '\?')[0]))
+    }
+    return @(@($found) | Select-Object -First $Max)
+}
+
+function Get-SeriesToolkitEnabledWebSearchEngines {
+    $raw = [Environment]::GetEnvironmentVariable('SERIESTOOLKIT_WEB_SEARCH_ENGINES', 'Process')
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @('ddg', 'yandex', 'google') }
+    $out = @()
+    foreach ($part in ($raw -split ',')) {
+        $x = ([string]$part).Trim().ToLowerInvariant()
+        if ($x -in @('ddg', 'yandex', 'google')) { $out += $x }
+    }
+    if ($out.Count -eq 0) { return @('ddg', 'yandex', 'google') }
+    return @($out | Select-Object -Unique)
+}
+
 function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [string]$Base, [string]$Tail) {
     if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
     $queries = [System.Collections.Generic.List[string]]::new()
@@ -1389,6 +1605,93 @@ function Get-EpisodesFromWikipediaViaDuckDuckGoWebSearch([string]$SearchQuery, [
         Start-Sleep -Milliseconds (320 + (Get-Random -Maximum 280))
     }
     return $null
+}
+
+function Get-EpisodesFromWikipediaAggressiveDdgMerge([string]$SearchQuery) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
+    $base = ($SearchQuery.Trim() -replace '\s*\([^)]*\)\s*$', '').Trim()
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = $SearchQuery.Trim() }
+    $tail = $null
+    $parts = $base -split '\s*[-\u2013\u2014]\s*'
+    if ($parts.Count -ge 2) {
+        $tail = $parts[-1].Trim()
+        if ($tail.Length -lt 2) { $tail = $null }
+    }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery список эпизодов")
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery телесериал эпизоды")
+    [void]$queries.Add("site:ru.wikipedia.org $base список серий мультсериал")
+    [void]$queries.Add("site:ru.wikipedia.org $base эпизоды сериал")
+    [void]$queries.Add("site:ru.wikipedia.org $base мультсериал серии")
+    if ($tail) {
+        [void]$queries.Add("site:ru.wikipedia.org $tail список эпизодов мультсериал")
+        [void]$queries.Add("site:ru.wikipedia.org $tail телесериал все серии")
+        [void]$queries.Add("site:ru.wikipedia.org сезон 1 $tail эпизоды")
+    }
+    $allRows = [System.Collections.Generic.List[object]]::new()
+    $seenUrls = @{}
+    foreach ($dq in ($queries | Select-Object -Unique)) {
+        foreach ($pageUrl in (Search-DuckDuckGoHtmlForWikipediaUrls $dq 24)) {
+            if ($seenUrls.ContainsKey($pageUrl)) { continue }
+            $seenUrls[$pageUrl] = $true
+            $t = Get-WikipediaPageTitleFromUrl $pageUrl
+            if ([string]::IsNullOrWhiteSpace($t)) { continue }
+            $r = Get-EpisodesFromWikipediaPageTitleOrLinked $t
+            if (-not $r) { continue }
+            foreach ($x in @($r)) { [void]$allRows.Add($x) }
+        }
+        Start-Sleep -Milliseconds (300 + (Get-Random -Maximum 250))
+    }
+    if ($allRows.Count -eq 0) { return $null }
+    return @(Convert-EpisodeListToUniqueBySeasonEpisode @($allRows))
+}
+
+function Get-EpisodesFromWikipediaAggressiveWebMerge([string]$SearchQuery) {
+    if ([string]::IsNullOrWhiteSpace($SearchQuery)) { return $null }
+    $base = ($SearchQuery.Trim() -replace '\s*\([^)]*\)\s*$', '').Trim()
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = $SearchQuery.Trim() }
+    $tail = $null
+    $parts = $base -split '\s*[-\u2013\u2014]\s*'
+    if ($parts.Count -ge 2) {
+        $tail = $parts[-1].Trim()
+        if ($tail.Length -lt 2) { $tail = $null }
+    }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery список эпизодов")
+    [void]$queries.Add("site:ru.wikipedia.org $SearchQuery телесериал эпизоды")
+    [void]$queries.Add("site:ru.wikipedia.org $base список серий мультсериал")
+    if ($tail) {
+        [void]$queries.Add("site:ru.wikipedia.org $tail список эпизодов мультсериал")
+        [void]$queries.Add("site:ru.wikipedia.org $tail телесериал все серии")
+    }
+
+    $allRows = [System.Collections.Generic.List[object]]::new()
+    $seenUrls = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $engines = @(Get-SeriesToolkitEnabledWebSearchEngines)
+    foreach ($q in ($queries | Select-Object -Unique)) {
+        $urlBuckets = [System.Collections.Generic.List[object]]::new()
+        foreach ($engine in $engines) {
+            switch ($engine) {
+                'ddg' { [void]$urlBuckets.Add(@(Search-DuckDuckGoHtmlForWikipediaUrls $q 24)) }
+                'yandex' { [void]$urlBuckets.Add(@(Search-YandexHtmlForWikipediaUrls $q 24)) }
+                'google' { [void]$urlBuckets.Add(@(Search-GoogleHtmlForWikipediaUrls $q 24)) }
+            }
+        }
+        foreach ($bucket in @($urlBuckets)) {
+            foreach ($pageUrl in @($bucket)) {
+                if ([string]::IsNullOrWhiteSpace($pageUrl)) { continue }
+                if (-not $seenUrls.Add($pageUrl)) { continue }
+                $t = Get-WikipediaPageTitleFromUrl $pageUrl
+                if ([string]::IsNullOrWhiteSpace($t)) { continue }
+                $r = Get-EpisodesFromWikipediaPageTitleOrLinked $t
+                if (-not $r) { continue }
+                foreach ($x in @($r)) { [void]$allRows.Add($x) }
+            }
+            Start-Sleep -Milliseconds (220 + (Get-Random -Maximum 200))
+        }
+    }
+    if ($allRows.Count -eq 0) { return $null }
+    return @(Convert-EpisodeListToUniqueBySeasonEpisode @($allRows))
 }
 
 function Get-EpisodesFromWikipediaSearchQueries([string]$SearchQuery) {

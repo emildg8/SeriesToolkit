@@ -22,11 +22,15 @@ SeriesToolkit как раз это делает и пишет подробный
 
 После скачивания ZIP распакуйте в любую папку, рядом должен остаться родительский **`Fetch-VideoMetadata.ps1`** (в архиве он в корне пакета, если синхронизация с родительским репозиторием настроена — см. `Sync-GitHub.ps1`).
 
+## Входная сортировка (отдельный продукт)
+
+Пакет **MediaInboxToolkit** (каталог `MediaInboxToolkit/` в корне репозитория, ветка `media-inbox-toolkit`) — раскладка inbox → `Сериалы` / `Фильмы`, TMDB, Blu-ray. SeriesToolkit остаётся про нормализацию уже разложенных сериалов. См. [../MediaInboxToolkit/README.md](../MediaInboxToolkit/README.md).
+
 ## Как это выглядит (GUI)
 
 Актуальные скриншоты интерфейса:
 
-![Окно SeriesToolkit GUI](docs/images/01-gui-main.png)
+![Окно SeriesToolkit GUI](docs/images/01-gui-main-v2.png)
 
 Как сделать **настоящие** скриншоты у себя — пошагово: [docs/SCREENSHOTS-RU.md](docs/SCREENSHOTS-RU.md).
 
@@ -66,6 +70,20 @@ SeriesToolkit как раз это делает и пишет подробный
 - **Batch** — вся библиотека по `RootPath`.
 - **Manual** — один сериал + опционально локальный HTML со списком серий.
 
+## Профили источников метаданных
+
+- `Fast`:
+  - при наличии TMDB API: **только TMDB**;
+  - без TMDB API: **только Wikipedia**.
+- `Balanced`:
+  - при наличии TMDB API: **TMDB + Wikipedia + Кинопоиск**;
+  - без TMDB API: **Wikipedia + Кинопоиск**.
+- `Full`:
+  - при наличии TMDB API: **TMDB + Wikipedia + Кинопоиск + DDG + Yandex + Google**;
+  - без TMDB API: **Wikipedia + Кинопоиск + DDG + Yandex + Google**.
+
+Важно: кэш метаданных теперь разделён по профилю и состоянию TMDB API, чтобы `Fast` не «загрязнял» результаты `Balanced/Full`.
+
 ## Запуск из PowerShell
 
 **Пробный прогон (ничего не меняет на диске):**
@@ -74,10 +92,21 @@ SeriesToolkit как раз это делает и пишет подробный
 powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -DryRun
 ```
 
+**Проверка (VerifyOnly: строит план/логи, но не меняет файлы):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -VerifyOnly -ExecutionProfile Full
+```
+
+Для ускоренного пакетного предпросмотра можно включить ограниченный параллелизм через `batch_max_parallel` (до `4`, только `DryRun/VerifyOnly`).
+
 **Боевой:**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -Apply -UseTmdb
+
+# пример выбора профиля
+powershell -NoProfile -ExecutionPolicy Bypass -File .\SeriesToolkit.ps1 -Mode Batch -RootPath "\\сервер\шара\Сериалы" -DryRun -ExecutionProfile Full
 ```
 
 ## GUI
@@ -92,7 +121,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 - метрики времени: **время старта**, **сколько прошло**, **ETA (оценка завершения)**;
 - отдельную визуальную общую шкалу процента выполнения библиотеки;
 - «последняя активность Nс назад» (если долго нет новых строк — видно, что происходит тяжёлый этап);
-- кнопки **Пауза / Продолжить**, **Пропуск** (текущий сериал) и **Стоп** без закрытия окна;
+- кнопки **Свернуть**, **Пауза / Продолжить**, **Пропуск** (текущий сериал) и **Стоп** без закрытия окна;
+- выбор профиля запуска **Быстрый / Баланс / Полный** с краткой подсказкой по источникам;
+- компактный readonly-блок **Диагностика** с последней причиной недобора метаданных по текущему сериалу;
+- корректную адаптацию интерфейса при изменении размера/разворачивании окна;
 - при нажатии **Стоп** — корректный финальный статус «прервано пользователем» с краткой статистикой выполнения.
 
 Служебные GUI-логи:
@@ -119,7 +151,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-SeriesToolkitGui.ps1
 
 ## Логи
 
-Каталог `LOGS`: CSV по операциям и краткий TXT.
+Каталог `LOGS`: CSV по операциям, краткий TXT и отдельный `*-renames.txt` с явным `FROM -> TO` по переименованиям.
+Также формируется `*-renames.csv` для фильтрации/аналитики в Excel/BI.
+Для ручного разбора спорных кейсов формируется `*-review-queue.csv` (low-confidence, review-required, проблемные skip).
+В итоговом TXT добавлены throughput-метрики: `ProcessedSeries`, `SeriesPerMinute`, `AvgMetaFirstPassMs`.
+
+## Если метаданные не нашлись
+
+- Проверьте профиль: для максимального добора используйте `Full` (в GUI или `-ExecutionProfile Full`).
+- Убедитесь, что корректно задан `tmdb_api_key` в `SeriesToolkit.settings.json`; без ключа TMDB отключается и используются fallback-источники.
+- Для Кинопоиска обновите `kinopoisk_cookie` (если устарел сеанс, растёт шанс капчи/пустых ответов).
+- Увеличьте `metadata_request_timeout_sec` (например, до `90`) при медленном интернете.
+- Включайте `strict_mode=true` для безопасного режима: toolkit не будет делать рискованные переименования с заглушками, а отправит их в review-очередь.
+- Подключите алиасы в `series-aliases.json` (шаблон: `series-aliases.example.json`) для сложных/франшизных названий.
+- Для повторной проверки проблемного сериала запустите `Manual + DryRun`, чтобы быстро увидеть причины в `LOGS/gui-progress-*.log`.
+- Ищите строки `[SeriesToolkit][Diag] ...` в `gui-progress`/`TXT` — там кратко видно, какой источник дал `ok/no-match/error/captcha`.
+- Если в файлах остались заглушки `Серия N`, проверьте `*-renames.txt` и `SeriesToolkit-episode-index.csv` в папке сериала: там видно, что найдено и что не удалось сопоставить.
+
+## Как читать review-queue
+
+`*-review-queue.csv` — это очередь ручной проверки спорных кейсов.
+
+- `review-required`: strict mode заблокировал рискованное переименование (обычно нет подтверждённого названия, иначе была бы заглушка).
+- `skip-low-confidence`: итоговый confidence ниже `rename_min_confidence_apply`.
+- `skip-file` (`WARN/ERROR`): файл не удалось надёжно распарсить или собрать корректную цель.
+
+Практический порядок разбора:
+
+1. Сначала `review-required` (самые важные, потенциально рискованные случаи).
+2. Затем `skip-low-confidence` (порог можно ослабить, если кейсы массовые и однотипные).
+3. В конце `skip-file` (`ERROR`) — обычно это нестандартные имена/структура.
+
+Рекомендуемые пороги `rename_min_confidence_apply`:
+
+- `85` — консервативно (для «боевого» Apply на незнакомой библиотеке).
+- `75` — сбалансировано (дефолт, обычно лучший старт).
+- `65` — агрессивнее (когда библиотека однотипная и вы готовы чаще смотреть review-queue).
 
 ## Обратная связь
 

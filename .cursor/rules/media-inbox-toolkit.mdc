@@ -1,0 +1,13 @@
+---
+description: Версии и документация MediaInboxToolkit (inbox / сортировка NAS)
+globs: MediaInboxToolkit/**/*
+alwaysApply: false
+---
+
+# MediaInboxToolkit
+
+- Новое обращение по **MediaInboxToolkit** / inbox-сортировке — повод инкрементировать `MediaInboxToolkit/version.json` через `MediaInboxToolkit/Bump-Version.ps1` (или согласовать bump в сессии).
+- Запись в **`MediaInboxToolkit/CHANGELOG.md`** для версии — **сверху** под `# CHANGELOG`, с датой и смысловыми пунктами.
+- Общий модуль метаданных — **`Fetch-VideoMetadata.ps1`** в корне репозитория; при изменении TMDB-логики, общей для SeriesToolkit и MediaInbox, актуализируйте и родительский файл.
+- Стабильная линия **SeriesToolkit 0.1.27** не смешивается с версиями MediaInboxToolkit (отдельный `version.json`).
+- Публикация: отдельный remote/ветка (см. `MediaInboxToolkit/Sync-GitHub.ps1` и README).

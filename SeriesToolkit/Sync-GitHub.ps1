@@ -41,6 +41,51 @@ function Invoke-GhOrThrow {
     }
 }
 
+function Test-GhReleaseExists {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Repo
+    )
+    try {
+        & $gh release view $Tag -R $Repo 1>$null 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Get-ReleaseNotesFromChangelog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $lines = @($raw -split "`r?`n")
+    $header = "## $Version"
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].StartsWith($header, [System.StringComparison]::Ordinal)) {
+            $start = $i + 1
+            break
+        }
+    }
+    if ($start -lt 0) { return $null }
+    $items = [System.Collections.Generic.List[string]]::new()
+    for ($j = $start; $j -lt $lines.Count; $j++) {
+        $ln = [string]$lines[$j]
+        if ($ln -match '^##\s+') { break }
+        if ($ln -match '^\s*-\s+') { [void]$items.Add($ln.Trim()) }
+    }
+    if ($items.Count -eq 0) { return $null }
+    $body = @(
+        "Что добавлено и улучшено в версии ${Version}:",
+        ''
+    ) + @($items)
+    return ($body -join [Environment]::NewLine)
+}
+
 $allowedFiles = @(
     'Build-SeriesToolkitExe.ps1',
     'Bump-Version.ps1',
@@ -50,6 +95,7 @@ $allowedFiles = @(
     'SeriesToolkit.ps1',
     'SeriesToolkit.settings.example.json',
     'SeriesToolkit.settings.README.md',
+    'series-aliases.example.json',
     'Start-SeriesToolkitGui.Engine.ps1',
     'Start-SeriesToolkitGui.ps1',
     'Sync-GitHub.ps1',
@@ -66,7 +112,12 @@ foreach ($name in $allowedFiles) {
 foreach ($dirName in $allowedDirs) {
     $srcDir = Join-Path $ProjectRoot $dirName
     if (Test-Path -LiteralPath $srcDir) {
-        Copy-Item -LiteralPath $srcDir -Destination (Join-Path $PublishRepoPath $dirName) -Recurse -Force
+        $dstDir = Join-Path $PublishRepoPath $dirName
+        if (Test-Path -LiteralPath $dstDir) {
+            Remove-Item -LiteralPath $dstDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $srcDir '*') -Destination $dstDir -Recurse -Force
     }
 }
 # Секреты только локально — никогда не публиковать на GitHub
@@ -143,16 +194,18 @@ if ($version -match '^\d+\.\d+\.\d+$') {
     git -C "$PublishRepoPath" archive --format=zip --output="$zip" $tag
     if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать zip-архив релиза: $zip" }
 
-    $body = @"
-Автоматический релиз SeriesToolkit $version.
+    $body = Get-ReleaseNotesFromChangelog -Path (Join-Path $ProjectRoot 'CHANGELOG.md') -Version $version
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = @"
+Что добавлено и улучшено в версии ${version}:
 
-Состав:
-- исходники toolkit в состоянии тега $tag;
-- README/CHANGELOG/version.json текущей версии;
-- zip-архив для быстрого тестирования и отката.
+- Автоматический релиз SeriesToolkit $version.
+- Исходники toolkit в состоянии тега $tag.
+- README/CHANGELOG/version.json текущей версии.
+- ZIP-архив для быстрого тестирования и отката.
 "@
-    & $gh release view $tag -R $GitHubRepo 1>$null 2>$null
-    $releaseExists = ($LASTEXITCODE -eq 0)
+    }
+    $releaseExists = Test-GhReleaseExists -Tag $tag -Repo $GitHubRepo
     if ($releaseExists) {
         Invoke-GhOrThrow -Arguments @('release', 'upload', $tag, $zip, '-R', $GitHubRepo, '--clobber') -ErrorContext "Не удалось загрузить asset в release $tag"
     } else {
