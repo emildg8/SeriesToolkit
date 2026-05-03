@@ -12,7 +12,7 @@
 ## Быстрый запуск
 
 ```powershell
-cd D:\Dev\Script_Rename_ALLVideo\MediaInboxToolkit
+cd <корень репозитория>\MediaInboxToolkit
 powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.ps1 -UseTmdb -DryRun
 ```
 

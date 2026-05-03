@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "meta": {
-    "description": "Политика сортировки входящего видео (пример под \\\\Emilian_TNAS\\emildg8)",
+    "description": "Пример политики: замените nasShareRoot на UNC вашей шары.",
     "updatedAt": "2026-05-04"
   },
-  "nasShareRoot": "\\\\Emilian_TNAS\\emildg8",
+  "nasShareRoot": "\\\\FILESERVER\\media",
   "inboxRelative": "Video\\Sort",
   "destinations": {
     "series": "Video\\Сериалы",
