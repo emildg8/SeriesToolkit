@@ -1,4 +1,9 @@
-# CHANGELOG
+﻿# CHANGELOG
+
+
+## 0.1.1 - 2026-05-04 03:11:28 +03:00
+- Интеграция ContentKinds в CSV; scope.videoOnly в примере политики; документация CLASSIFICATION/OFFLINE/INSPIRATION/GUI; Publish-MediaInboxStandalone.ps1; исправлен расчёт относительного пути от inbox для эвристик.
+- Snapshot: `OLD/MediaInboxToolkit_v0.1.0_20260504-031128` (изменился `MediaInboxToolkit.ps1`).
 
 ## 0.1.0 - 2026-05-04 12:00:00 +03:00
 - Выделен отдельный продукт **MediaInboxToolkit** в каталоге репозитория `MediaInboxToolkit/` (ветка `media-inbox-toolkit`): движок `MediaInboxToolkit.Engine.ps1`, launcher `MediaInboxToolkit.ps1`, политика `sort-inbox.example.json`, план `docs/SORT-INBOX-PLAN.md`.

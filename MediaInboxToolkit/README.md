@@ -20,13 +20,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.ps1 -Use
 
 После проверки CSV в `LOGS\`: добавьте `-Apply`.
 
-## Связка с SeriesToolkit (дорожная карта)
+## Оркестратор (inbox → SeriesToolkit)
 
-Идея: **MediaInboxToolkit** раскладывает файлы по структуре; **SeriesToolkit.Engine.ps1** можно вызывать вторым шагом с `-RootPath` на папку нового сериала (тот же `Fetch-VideoMetadata.ps1` уже подключён в обоих). Явная оркестрация (один master-скрипт) — в планах; сейчас два независимых запуска.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.Orchestrate.ps1 `
+  -InboxPath '\\NAS\share\Video\Sort' -UseTmdb -DryRun
+```
+
+С `-Apply` и `-RunSeriesToolkitAfter -SeriesToolkitRoots 'D:\Media\Сериалы\НовыйСериал'` вторым шагом вызывается `SeriesToolkit\SeriesToolkit.Engine.ps1` (пути укажите свои).
+
+## Публикация в отдельный репозиторий GitHub
+
+Из **корня монорепо** при настроенном remote `media-inbox` → `https://github.com/emildg8/MediaInboxToolkit.git`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-MediaInboxStandalone.ps1
+```
+
+## Связка с SeriesToolkit
+
+**MediaInboxToolkit** раскладывает файлы по структуре; **SeriesToolkit** (стабильная линия **0.1.27**) полирует имена эпизодов уже в целевых папках. Общий модуль метаданных — `Fetch-VideoMetadata.ps1`.
 
 ## Документация
 
 - [docs/SORT-INBOX-PLAN.md](docs/SORT-INBOX-PLAN.md) — структура NAS, фазы, параметры политики.
+- [docs/CLASSIFICATION-ROADMAP.md](docs/CLASSIFICATION-ROADMAP.md) — типы контента 2.x и план сигналов.
+- [docs/OFFLINE-METADATA.md](docs/OFFLINE-METADATA.md) — постер и описание рядом с медиа.
+- [docs/INSPIRATION-SERIESTOOLKIT.md](docs/INSPIRATION-SERIESTOOLKIT.md) — что перенимаем из SeriesToolkit.
+- [docs/GUI-EXE-ROADMAP.md](docs/GUI-EXE-ROADMAP.md) — GUI и сборка EXE.
 
 ## Версии и журнал
 

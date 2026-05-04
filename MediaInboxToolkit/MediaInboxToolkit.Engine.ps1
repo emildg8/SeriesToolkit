@@ -32,16 +32,30 @@ try {
 if ($Apply -and $DryRun) { throw 'Cannot use -Apply and -DryRun together.' }
 if (-not $Apply) { $DryRun = $true }
 
-$fetchModule = Join-Path (Split-Path -Parent $PSScriptRoot) 'Fetch-VideoMetadata.ps1'
-if (-not (Test-Path -LiteralPath $fetchModule)) {
-    $fetchModule = Join-Path $PSScriptRoot 'Fetch-VideoMetadata.ps1'
+$fetchModule = $null
+$envFetch = [Environment]::GetEnvironmentVariable('FETCH_VIDEO_METADATA_PATH', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($envFetch) -and (Test-Path -LiteralPath $envFetch)) {
+    $fetchModule = $envFetch
 }
-if (-not (Test-Path -LiteralPath $fetchModule)) {
-    throw "Fetch-VideoMetadata.ps1 not found (ожидается в корне репозитория, рядом с папкой MediaInboxToolkit): $fetchModule"
+if (-not $fetchModule) {
+    $here = Join-Path $PSScriptRoot 'Fetch-VideoMetadata.ps1'
+    if (Test-Path -LiteralPath $here) { $fetchModule = $here }
+}
+if (-not $fetchModule) {
+    $parent = Join-Path (Split-Path -Parent $PSScriptRoot) 'Fetch-VideoMetadata.ps1'
+    if (Test-Path -LiteralPath $parent) { $fetchModule = $parent }
+}
+if (-not $fetchModule -or -not (Test-Path -LiteralPath $fetchModule)) {
+    throw "Fetch-VideoMetadata.ps1 not found. Положите рядом со скриптами (standalone), в родителе папки MediaInboxToolkit (монорепо) или задайте FETCH_VIDEO_METADATA_PATH."
 }
 . $fetchModule
 if (Get-Command Initialize-WebClient -ErrorAction SilentlyContinue) {
     try { Initialize-WebClient } catch { }
+}
+
+$contentKindsPath = Join-Path $PSScriptRoot 'MediaInboxToolkit.ContentKinds.ps1'
+if (Test-Path -LiteralPath $contentKindsPath) {
+    . $contentKindsPath
 }
 
 function ConvertTo-SafeFolderName([string]$Name) {
@@ -234,6 +248,8 @@ if (-not (Test-Path -LiteralPath $InboxPath)) {
     throw "Inbox path not found (create folder or pass -InboxPath): $InboxPath"
 }
 
+$inboxNormForRel = $InboxPath.TrimEnd('\')
+
 $destSeries = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.series)
 $destCartoons = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.cartoons)
 $destMovies = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.movies)
@@ -406,6 +422,22 @@ $rows = [System.Collections.Generic.List[object]]::new()
 
 foreach ($f in $files) {
     $cls = Get-VideoClassification -FileName $f.Name
+    $relFromInbox = ''
+    $prefixInbox = $inboxNormForRel + '\'
+    if ($f.FullName.StartsWith($prefixInbox, [StringComparison]::OrdinalIgnoreCase)) {
+        $relFromInbox = $f.FullName.Substring($prefixInbox.Length)
+    }
+    $ckKind = ''
+    $ckConf = ''
+    $ckWhy = ''
+    if (Get-Command Get-MediaInboxVideoKindGuess -ErrorAction SilentlyContinue) {
+        $kg = Get-MediaInboxVideoKindGuess -File $f -RelativePathFromInbox $relFromInbox
+        if ($kg) {
+            $ckKind = [string]$kg.Kind
+            $ckConf = [string]$kg.Confidence
+            $ckWhy = [string]$kg.Reason
+        }
+    }
     $destRootSeries = if ($preferCartoons) { $destCartoons } else { $destSeries }
     $destFull = $null
     $newFileName = $f.Name
@@ -504,12 +536,15 @@ foreach ($f in $files) {
     }
 
     $rows.Add([pscustomobject]@{
-            SourceFullPath = $f.FullName
-            DestFullPath   = $destFull
-            Kind           = $cls.Kind
-            Confidence     = $cls.Confidence
-            Notes          = $notes
-            DryRun         = [bool]$DryRun
+            SourceFullPath       = $f.FullName
+            DestFullPath         = $destFull
+            Kind                 = $cls.Kind
+            ContentKindGuess     = $ckKind
+            ContentKindConfidence = $ckConf
+            ContentKindReason    = $ckWhy
+            Confidence           = $cls.Confidence
+            Notes                = $notes
+            DryRun               = [bool]$DryRun
         }) | Out-Null
 }
 
@@ -549,12 +584,15 @@ foreach ($bdRoot in $blurayRoots) {
         $notes += ';collision_folder_to_review'
     }
     $rows.Add([pscustomobject]@{
-            SourceFullPath = $bdRoot
-            DestFullPath   = $destFull
-            Kind           = 'bluray_remux'
-            Confidence     = if ($mid) { 72 } else { 35 }
-            Notes          = $notes
-            DryRun         = [bool]$DryRun
+            SourceFullPath         = $bdRoot
+            DestFullPath           = $destFull
+            Kind                   = 'bluray_remux'
+            ContentKindGuess         = 'bluray_remux'
+            ContentKindConfidence    = ''
+            ContentKindReason        = 'bdmv_stream'
+            Confidence             = if ($mid) { 72 } else { 35 }
+            Notes                    = $notes
+            DryRun                   = [bool]$DryRun
         }) | Out-Null
 }
 

@@ -12,6 +12,9 @@
     "movies": "Video\\Фильмы",
     "review": "Video\\_SortReview"
   },
+  "scope": {
+    "videoOnly": true
+  },
   "preferCartoonsSubfolder": false,
   "displayNames": {
     "tmdbLanguage": "ru-RU",

@@ -65,8 +65,11 @@ if (-not (Test-Path -LiteralPath $oldRoot)) {
 $snapshotDir = Join-Path $oldRoot ("MediaInboxToolkit_v{0}_{1}" -f $oldVersion, (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $snapshotDir -Force | Out-Null
 foreach ($name in @(
-        'MediaInboxToolkit.ps1', 'MediaInboxToolkit.Engine.ps1', 'README.md', 'CHANGELOG.md', 'version.json',
-        'Sync-GitHub.ps1', 'sort-inbox.example.json', 'docs/SORT-INBOX-PLAN.md'
+        'MediaInboxToolkit.ps1', 'MediaInboxToolkit.Engine.ps1', 'MediaInboxToolkit.ContentKinds.ps1',
+        'MediaInboxToolkit.Orchestrate.ps1', 'Publish-MediaInboxStandalone.ps1',
+        'README.md', 'CHANGELOG.md', 'version.json',
+        'Sync-GitHub.ps1', 'sort-inbox.example.json', 'docs/SORT-INBOX-PLAN.md',
+        'docs/CLASSIFICATION-ROADMAP.md', 'docs/OFFLINE-METADATA.md', 'docs/INSPIRATION-SERIESTOOLKIT.md', 'docs/GUI-EXE-ROADMAP.md'
     )) {
     $p = Join-Path $ProjectRoot $name
     if (-not (Test-Path -LiteralPath $p)) { continue }
