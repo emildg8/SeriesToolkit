@@ -4,6 +4,12 @@
 
 
 
+
+## 0.1.5 - 2026-05-04 03:49:24 +03:00
+- Контекст папки Season+NN.; Robot Chicken Star Wars TV-special; fallback поиск TMDB movie; allowMissingYearIfTmdbMatched (политика).
+- Выравнивание ContentKindGuess к series_episode после контекста папки (корректный destinationsByKind).
+- Snapshot: OLD/MediaInboxToolkit_v0.1.4_20260504-034924 (launcher MediaInboxToolkit.ps1).
+
 ## 0.1.4 - 2026-05-04 03:43:58 +03:00
 - ContentKinds: кириллица через Unicode-кодпоинты (исправлен ParseError на некоторых кодировках файла).
 - Snapshot: OLD/MediaInboxToolkit_v0.1.3_20260504-034358 (launcher MediaInboxToolkit.ps1).

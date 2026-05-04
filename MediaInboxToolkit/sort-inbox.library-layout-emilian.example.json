@@ -36,6 +36,11 @@
   "folders": {
     "createDestinationRootsOnApply": true
   },
+  "classification": {
+    "folderSeasonContext": { "enabled": true },
+    "tvSpecialFilenameBoost": { "enabled": true },
+    "movies": { "allowMissingYearIfTmdbMatched": true }
+  },
   "scope": {
     "videoOnly": true
   },

@@ -225,6 +225,105 @@ function Get-VideoClassification {
     }
 }
 
+function Convert-SortRomanToInt {
+    param([string]$Roman)
+    if ([string]::IsNullOrWhiteSpace($Roman)) { return 0 }
+    $u = $Roman.Trim().ToUpperInvariant()
+    $map = @{
+        'I' = 1; 'II' = 2; 'III' = 3; 'IV' = 4; 'V' = 5; 'VI' = 6; 'VII' = 7; 'VIII' = 8; 'IX' = 9; 'X' = 10
+        'XI' = 11; 'XII' = 12; 'XIII' = 13
+    }
+    if ($map.ContainsKey($u)) { return [int]$map[$u] }
+    return 0
+}
+
+function Merge-VideoClassificationWithFolderContext {
+    param(
+        $Cls,
+        [System.IO.FileInfo]$File,
+        [string]$InboxPrefixWithSlash
+    )
+    if ($null -eq $Cls -or $Cls.Kind -eq 'series') { return $Cls }
+    if (-not $File -or [string]::IsNullOrWhiteSpace($InboxPrefixWithSlash)) { return $Cls }
+    $dir = $File.Directory.FullName
+    if (-not $dir.StartsWith($InboxPrefixWithSlash, [StringComparison]::OrdinalIgnoreCase)) { return $Cls }
+    $relDir = $dir.Substring($InboxPrefixWithSlash.Length).TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($relDir)) { return $Cls }
+    $parts = @($relDir -split '\\' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($parts.Count -lt 2) { return $Cls }
+    $last = $parts[$parts.Count - 1]
+    $seasonNum = $null
+    foreach ($pat in @(
+            '(?i)\bseason\s*\(?\s*(\d{1,2})\s*\)?',
+            '(?i)(\d{1,2})\s*season\b',
+            '(?i)\(season\s*(\d{1,2})\s*\)',
+            '(?i)\bs(\d{1,2})(?:\s|$|[_\.\-])'
+        )) {
+        $m = [regex]::Match($last, $pat)
+        if ($m.Success) {
+            $seasonNum = [int]$m.Groups[1].Value
+            break
+        }
+    }
+    if ($null -eq $seasonNum) { return $Cls }
+    $showPart = $parts[$parts.Count - 2]
+    if ([string]::IsNullOrWhiteSpace($showPart)) { return $Cls }
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    $me = [regex]::Match($base, '^(\d{1,3})\.\s*')
+    if (-not $me.Success) {
+        $me = [regex]::Match($base, '^(\d{1,3})[\s\-_]+')
+    }
+    if (-not $me.Success) { return $Cls }
+    $ep = [int]$me.Groups[1].Value
+    $titleAfter = $base.Substring($me.Length).TrimStart('.-_ ')
+    if ([string]::IsNullOrWhiteSpace($titleAfter)) { $titleAfter = $null }
+    $sg = Remove-SortReleaseTechnicalTokens $showPart
+    if ([string]::IsNullOrWhiteSpace($sg)) { return $Cls }
+    $o = [pscustomobject]@{
+        Kind         = 'series'
+        Season       = $seasonNum
+        Episode      = $ep
+        SeriesGuess  = $sg
+        EpisodeTitle = $titleAfter
+        Confidence   = 62
+        QueryMovie   = $null
+    }
+    Add-Member -InputObject $o -MemberType NoteProperty -Name SortSource -Value 'folder_season_episode' -Force
+    return $o
+}
+
+function Resolve-SortTvSpecialFromMovieFilename {
+    param(
+        $Cls,
+        [string]$FileName,
+        [string]$ApiKey,
+        [string]$Lang,
+        [bool]$Enabled
+    )
+    if (-not $Enabled -or $null -eq $Cls -or $Cls.Kind -ne 'movie') { return $Cls }
+    if ([string]::IsNullOrWhiteSpace($ApiKey)) { return $Cls }
+    if (-not (Get-Command Search-TmdbTvSeries -ErrorAction SilentlyContinue)) { return $Cls }
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($FileName)
+    $m = [regex]::Match($base, '(?i)Robot\.Chicken.*?Star\.Wars.*?Episode\.(?<r>[IVXLCDM]{1,8})')
+    if (-not $m.Success) { return $Cls }
+    $roman = [string]$m.Groups['r'].Value
+    $ep = Convert-SortRomanToInt $roman
+    if ($ep -le 0) { return $Cls }
+    $hits = @(Search-TmdbTvSeries -Query 'Robot Chicken' -ApiKey $ApiKey -Language $Lang)
+    if ($hits.Count -eq 0) { return $Cls }
+    $o = [pscustomobject]@{
+        Kind         = 'series'
+        Season       = 0
+        Episode      = $ep
+        SeriesGuess  = 'Robot Chicken'
+        EpisodeTitle = "Star Wars Episode $roman"
+        Confidence   = 58
+        QueryMovie   = $null
+    }
+    Add-Member -InputObject $o -MemberType NoteProperty -Name SortSource -Value 'tv_special_filename' -Force
+    return $o
+}
+
 function Expand-PolicyPath {
     param(
         [string]$NasRoot,
@@ -358,6 +457,31 @@ if (($policy.PSObject.Properties.Name -contains 'folders') -and $null -ne $polic
     $fd = $policy.folders
     if ($fd.PSObject.Properties.Name -contains 'createDestinationRootsOnApply') {
         $createDestRootsOnApply = [bool]$fd.createDestinationRootsOnApply
+    }
+}
+
+$folderSeasonContextEnabled = $true
+$tvSpecialFilenameBoostEnabled = $true
+$allowMovieNoYearIfTmdbMatched = $true
+if ($policy.PSObject.Properties.Name -contains 'classification' -and $null -ne $policy.classification) {
+    $cf = $policy.classification
+    if ($cf.PSObject.Properties.Name -contains 'folderSeasonContext' -and $null -ne $cf.folderSeasonContext) {
+        $fsc = $cf.folderSeasonContext
+        if ($fsc.PSObject.Properties.Name -contains 'enabled') {
+            $folderSeasonContextEnabled = [bool]$fsc.enabled
+        }
+    }
+    if ($cf.PSObject.Properties.Name -contains 'tvSpecialFilenameBoost' -and $null -ne $cf.tvSpecialFilenameBoost) {
+        $tsb = $cf.tvSpecialFilenameBoost
+        if ($tsb.PSObject.Properties.Name -contains 'enabled') {
+            $tvSpecialFilenameBoostEnabled = [bool]$tsb.enabled
+        }
+    }
+    if ($cf.PSObject.Properties.Name -contains 'movies' -and $null -ne $cf.movies) {
+        $mv = $cf.movies
+        if ($mv.PSObject.Properties.Name -contains 'allowMissingYearIfTmdbMatched') {
+            $allowMovieNoYearIfTmdbMatched = [bool]$mv.allowMissingYearIfTmdbMatched
+        }
     }
 }
 
@@ -537,12 +661,49 @@ function Get-MitCachedTmdbMovieDetails {
     return $d
 }
 
+function Invoke-SortTmdbMovieSearchWithFallbacks {
+    param(
+        [string]$OriginalBaseName,
+        [string]$ApiKey,
+        [string]$Lang
+    )
+    if ([string]::IsNullOrWhiteSpace($ApiKey) -or -not (Get-Command Search-TmdbMovie -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    $queries = [System.Collections.Generic.List[string]]::new()
+    $q0 = Remove-SortReleaseTechnicalTokens ([regex]::Replace([string]$OriginalBaseName, '\s*\(\d{4}\)\s*$', '').Trim())
+    if (-not [string]::IsNullOrWhiteSpace($q0)) { [void]$queries.Add($q0) }
+    $tok = ($q0 -split '\s+' | Where-Object { $_.Length -ge 4 } | Select-Object -First 6) -join ' '
+    if (-not [string]::IsNullOrWhiteSpace($tok) -and $tok -ne $q0) { [void]$queries.Add($tok) }
+    $dots = (($OriginalBaseName -split '\.') | Where-Object { $_ -match '[A-Za-z\u0400-\u04ff]{2,}' } | Select-Object -First 6) -join ' '
+    $dots = Remove-SortReleaseTechnicalTokens $dots
+    if (-not [string]::IsNullOrWhiteSpace($dots) -and $dots.Length -ge 6) {
+        $dup = $false
+        foreach ($existing in $queries) { if ($existing -eq $dots) { $dup = $true; break } }
+        if (-not $dup) { [void]$queries.Add($dots) }
+    }
+    foreach ($q in $queries) {
+        if ([string]::IsNullOrWhiteSpace($q)) { continue }
+        $mh = @(Search-TmdbMovie -Query $q.Trim() -ApiKey $ApiKey -Language $Lang)
+        if ($mh.Count -gt 0) {
+            return @{ Hits = $mh; UsedQuery = $q.Trim() }
+        }
+    }
+    return $null
+}
+
 $rows = [System.Collections.Generic.List[object]]::new()
 
 foreach ($f in $files) {
-    $cls = Get-VideoClassification -FileName $f.Name
-    $relFromInbox = ''
     $prefixInbox = $inboxNormForRel + '\'
+    $cls = Get-VideoClassification -FileName $f.Name
+    if ($folderSeasonContextEnabled) {
+        $cls = Merge-VideoClassificationWithFolderContext -Cls $cls -File $f -InboxPrefixWithSlash $prefixInbox
+    }
+    if ($tvSpecialFilenameBoostEnabled -and $UseTmdb -and -not [string]::IsNullOrWhiteSpace($key) -and $cls.Kind -eq 'movie') {
+        $cls = Resolve-SortTvSpecialFromMovieFilename -Cls $cls -FileName $f.Name -ApiKey $key -Lang $tmdbLang -Enabled $true
+    }
+    $relFromInbox = ''
     if ($f.FullName.StartsWith($prefixInbox, [StringComparison]::OrdinalIgnoreCase)) {
         $relFromInbox = $f.FullName.Substring($prefixInbox.Length)
     }
@@ -558,6 +719,14 @@ foreach ($f in $files) {
             $ckWhy = [string]$kg.Reason
             $null = [int]::TryParse($ckConf, [ref]$ckConfInt)
         }
+    }
+    if ($cls.Kind -eq 'series' -and ($ckKind -in @('', 'movie', 'unknown') -or $ckKind -eq 'movie')) {
+        $ckKind = 'series_episode'
+        $boost = 55
+        if ($cls.PSObject.Properties.Name -contains 'SortSource' -and [string]$cls.SortSource -eq 'folder_season_episode') { $boost = 58 }
+        $ckConfInt = [Math]::Max($ckConfInt, $boost)
+        $ckConf = [string]$ckConfInt
+        $ckWhy = if ([string]::IsNullOrWhiteSpace($ckWhy)) { 'align_ck_to_series_classification' } else { "$ckWhy|align_ck_to_series_classification" }
     }
 
     if ($safetyRequireInbox -and -not $f.FullName.StartsWith($prefixInbox, [StringComparison]::OrdinalIgnoreCase)) {
@@ -617,6 +786,10 @@ foreach ($f in $files) {
         $destRootSeries = $destByKey[$seriesDestKey]
         $activeDestRootKey = $seriesDestKey
         if (-not [string]::IsNullOrWhiteSpace($seriesRow.Notes)) { $notes = $seriesRow.Notes }
+        if ($cls.PSObject.Properties.Name -contains 'SortSource' -and -not [string]::IsNullOrWhiteSpace([string]$cls.SortSource)) {
+            if ($notes) { $notes += ';' }
+            $notes += ('sort_source:{0}' -f [string]$cls.SortSource)
+        }
         $seriesFolder = [string]$seriesRow.SeriesFolder
         $seasonFolder = $seasonFmt -f $cls.Season
         $titleForFile = Resolve-SortEpisodeDisplayTitle -Cls $cls -SeriesRow $seriesRow -ApiKey $key -Lang $tmdbLang -FallbackFmt $epFallbackFmt
@@ -651,10 +824,11 @@ foreach ($f in $files) {
             if (-not [string]::IsNullOrWhiteSpace($yFromName)) { $year = $yFromName }
         }
         if ($UseTmdb -and -not [string]::IsNullOrWhiteSpace($key) -and (Get-Command Search-TmdbMovie -ErrorAction SilentlyContinue)) {
-            $q = [regex]::Replace([string]$cls.QueryMovie, '\s*\(\d{4}\)\s*$', '').Trim()
-            $q = Remove-SortReleaseTechnicalTokens $q
-            if ([string]::IsNullOrWhiteSpace($q)) { $q = [string]$cls.QueryMovie }
-            $mh = @(Search-TmdbMovie -Query $q -ApiKey $key -Language $tmdbLang)
+            $bundle = Invoke-SortTmdbMovieSearchWithFallbacks -OriginalBaseName ([string]$cls.QueryMovie) -ApiKey $key -Lang $tmdbLang
+            $mh = @()
+            if ($null -ne $bundle -and $bundle.Hits) {
+                $mh = @($bundle.Hits)
+            }
             if ($mh.Count -gt 0) {
                 $mid = [int]$mh[0].id
                 $resolved = $null
@@ -670,6 +844,9 @@ foreach ($f in $files) {
                 $rd = [string]$mh[0].release_date
                 if ($rd -and $rd.Length -ge 4) { $year = $rd.Substring(0, 4) }
                 $notes = "tmdb_movie:$mid"
+                if ($null -ne $bundle.UsedQuery) {
+                    $notes += ";tmdb_movie_query=$($bundle.UsedQuery)"
+                }
                 $cls.Confidence = 75
             }
         }
@@ -688,13 +865,20 @@ foreach ($f in $files) {
         if (-not $destByKey.ContainsKey($movieDestKey)) { $movieDestKey = 'movies' }
         $destMoviesResolved = $destByKey[$movieDestKey]
         if ([string]::IsNullOrWhiteSpace($year)) { $year = '0000' }
-        $tmdbMovieOk = $notes -match '^tmdb_movie:\d+'
+        $tmdbMovieOk = $notes -match 'tmdb_movie:\d+'
         if ($year -eq '0000' -and -not $tmdbMovieOk) {
             $destFull = Join-Path $destReview $f.Name
             $newFileName = $f.Name
             $cls.Confidence = 25
             $activeDestRootKey = 'review'
             $notes = if ([string]::IsNullOrWhiteSpace($notes)) { 'movie_needs_year_or_tmdb' } else { "$notes;movie_needs_year_or_tmdb" }
+        }
+        elseif ($year -eq '0000' -and $tmdbMovieOk -and -not $allowMovieNoYearIfTmdbMatched) {
+            $destFull = Join-Path $destReview $f.Name
+            $newFileName = $f.Name
+            $cls.Confidence = 30
+            $activeDestRootKey = 'review'
+            $notes = if ([string]::IsNullOrWhiteSpace($notes)) { 'movie_needs_year_policy_strict' } else { "$notes;movie_needs_year_policy_strict" }
         }
         else {
             $yearToken = if ($year -eq '0000') { '' } else { $year }
@@ -841,6 +1025,7 @@ $summary = @(
     "Inbox: $InboxPath"
     "Apply: $Apply  DryRun: $DryRun  UseTmdb: $UseTmdb  BlurayRoots: $($blurayRoots.Count)"
     "TmdbKindRefine: $tmdbKindRefineEnabled  CreateDestRootsOnApply: $createDestRootsOnApply"
+    "Classification: folderSeason=$folderSeasonContextEnabled tvSpecial=$tvSpecialFilenameBoostEnabled movieNoYearIfTmdb=$allowMovieNoYearIfTmdbMatched"
     "Planned rows: $($rows.Count)  Moved: $applied  SkippedSamePath: $skipped"
     "CSV: $csvPath"
 ) -join "`r`n"

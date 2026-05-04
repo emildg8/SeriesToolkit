@@ -57,6 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-
 - **`safety`** — `requireSourceUnderInbox`, `skipSourceIfUnderLibrary` + `libraryRootRelatives`, чтобы не трогать файлы уже в библиотеке.
 - **`tmdbKindRefinement`** — уточнение «аниме vs мульт» по TMDB (жанр Animation + регион).
 - **`folders.createDestinationRootsOnApply`** — перед переносом создать все каталоги из `destinations`, если отсутствуют.
+- **`classification`** — `folderSeasonContext` (папка `Season N` + файл `NN.`), `tvSpecialFilenameBoost` (Robot Chicken Star Wars Episode I→TV), `movies.allowMissingYearIfTmdbMatched`.
 
 ## Документация
 
