@@ -65,4 +65,4 @@ finally {
     Pop-Location
 }
 
-Write-Host 'Готово: origin MediaInboxToolkit обновлён (main).'
+Write-Host 'OK: remote media-inbox main updated.'

@@ -34,8 +34,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.Orchestr
 Из **корня монорепо** при настроенном remote `media-inbox` → `https://github.com/emildg8/MediaInboxToolkit.git`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-MediaInboxStandalone.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-MediaInboxStandalone.ps1 -ForceWithLease
 ```
+
+`-ForceWithLease` нужен, если на GitHub в `main` уже есть коммиты вне текущего subtree (типично после ручных правок).
 
 ## Связка с SeriesToolkit
 
