@@ -3,6 +3,11 @@
 
 
 
+
+## 0.1.4 - 2026-05-04 03:43:58 +03:00
+- ContentKinds: кириллица через Unicode-кодпоинты (исправлен ParseError на некоторых кодировках файла).
+- Snapshot: OLD/MediaInboxToolkit_v0.1.3_20260504-034358 (launcher MediaInboxToolkit.ps1).
+
 ## 0.1.3 - 2026-05-04 03:34:42 +03:00
 - TMDB жанры 16+регион; Fetch: Get-TmdbGenreIdsFromMediaObject; createDestinationRootsOnApply; пример sort-inbox.library-layout-emilian; GUI MVP.
 - Snapshot: OLD/MediaInboxToolkit_v0.1.2_20260504-033442 (launcher MediaInboxToolkit.ps1).

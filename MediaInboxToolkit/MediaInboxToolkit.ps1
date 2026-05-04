@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Точка входа MediaInboxToolkit — входная сортировка видео (NAS / локально).
+  Точка входа MediaInboxToolkit — входная сортировка видео (NAS / локально), UTF-8.
 .NOTES
   Двухшаговый сценарий: MediaInboxToolkit.Orchestrate.ps1. GUI: Start-MediaInboxToolkitGui.ps1.
 #>
