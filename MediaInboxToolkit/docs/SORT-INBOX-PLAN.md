@@ -58,6 +58,8 @@
 
 - Учёт `series-aliases` / локальных overrides для «плохих» имён.
 - Связка с основным движком SeriesToolkit для финальной нормализации эпизодов после раскладки по сериалам.
+- Политика: **`destinationsByKind`** / **`destinationsByKindMinConfidence`** — выбор целевой ветки (`animeSeries`, `movies`, …) по эвристике вида контента; **`safety`** — не переносить файлы вне inbox и/или уже лежащие под корнями библиотеки.
+- `MediaInboxToolkit.Orchestrate.ps1`: опционально **`-SeriesToolkitRootsFromLastCsv`** — корни сериалов из последнего отчёта `sort-inbox-*.csv`.
 
 ### Фаза 3
 

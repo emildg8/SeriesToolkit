@@ -83,7 +83,7 @@ foreach ($name in @(
 
 if (Test-Path -LiteralPath $ChangelogPath) {
     $existing = Get-Content -LiteralPath $ChangelogPath -Raw -Encoding UTF8
-    $entry = "## $newVersion - $stamp`n- $ChangeNote`n- Snapshot: `OLD/$(Split-Path -Leaf $snapshotDir)` (изменился `MediaInboxToolkit.ps1`).`n"
+    $entry = "## $newVersion - $stamp`n- $ChangeNote`n- Snapshot: OLD/$(Split-Path -Leaf $snapshotDir) (launcher MediaInboxToolkit.ps1).`n"
     $updated = if ($existing -match '^#\s*CHANGELOG\s*') {
         $existing -replace '^(#\s*CHANGELOG\s*\r?\n)', ('$1' + "`r`n" + $entry + "`r`n")
     } else {

@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.Orchestr
   -InboxPath '\\NAS\share\Video\Sort' -UseTmdb -DryRun
 ```
 
-С `-Apply` и `-RunSeriesToolkitAfter -SeriesToolkitRoots 'D:\Media\Сериалы\НовыйСериал'` вторым шагом вызывается `SeriesToolkit\SeriesToolkit.Engine.ps1` (пути укажите свои).
+С `-Apply` и `-RunSeriesToolkitAfter` вторым шагом вызывается `SeriesToolkit\SeriesToolkit.Engine.ps1`. Корни можно задать вручную (`-SeriesToolkitRoots`) и/или взять из последнего `sort-inbox-*.csv` шага 1: `-SeriesToolkitRootsFromLastCsv` (или явный `-SeriesToolkitCsvPath`).
 
 ## Публикация в отдельный репозиторий GitHub
 
@@ -42,6 +42,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-
 ## Связка с SeriesToolkit
 
 **MediaInboxToolkit** раскладывает файлы по структуре; **SeriesToolkit** (стабильная линия **0.1.27**) полирует имена эпизодов уже в целевых папках. Общий модуль метаданных — `Fetch-VideoMetadata.ps1`.
+
+## Политика (расширения)
+
+- **`destinations`** — любые именованные корни (не только `series` / `cartoons` / `movies` / `review`): например `animeSeries`, `animeMovies`; пути относительно `nasShareRoot`.
+- **`destinationsByKind`** — карта вида контента (`MediaInboxToolkit.ContentKinds.ps1`) → имя ключа из `destinations`.
+- **`destinationsByKindMinConfidence`** — минимальная уверенность эвристики (0–100), иначе используется прежняя логика (`preferCartoonsSubfolder` / сериал vs фильм).
+- **`safety`** — `requireSourceUnderInbox`, `skipSourceIfUnderLibrary` + `libraryRootRelatives`, чтобы не трогать файлы уже в библиотеке.
 
 ## Документация
 

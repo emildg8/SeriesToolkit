@@ -1,6 +1,11 @@
 ﻿# CHANGELOG
 
 
+
+## 0.1.2 - 2026-05-04 03:22:37 +03:00
+- destinationsByKind + safety; destRootKey в CSV; Orchestrate: корни SeriesToolkit из sort-inbox CSV.
+- Snapshot: `OLD/MediaInboxToolkit_v0.1.1_20260504-032237` (изменился `MediaInboxToolkit.ps1`).
+
 ## 0.1.1 - 2026-05-04 03:11:28 +03:00
 - Интеграция ContentKinds в CSV; scope.videoOnly в примере политики; документация CLASSIFICATION/OFFLINE/INSPIRATION/GUI; Publish-MediaInboxStandalone.ps1; исправлен расчёт относительного пути от inbox для эвристик.
 - Snapshot: `OLD/MediaInboxToolkit_v0.1.0_20260504-031128` (изменился `MediaInboxToolkit.ps1`).

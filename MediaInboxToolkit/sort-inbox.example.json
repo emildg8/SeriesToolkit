@@ -10,10 +10,38 @@
     "series": "Video\\Сериалы",
     "cartoons": "Video\\Мультсериалы",
     "movies": "Video\\Фильмы",
-    "review": "Video\\_SortReview"
+    "review": "Video\\_SortReview",
+    "animeSeries": "Video\\Аниме\\Сериалы",
+    "animeMovies": "Video\\Аниме\\Фильмы"
   },
+  "destinationsByKind": {
+    "series_episode": "series",
+    "series_related_movie": "movies",
+    "cartoon_series_episode": "cartoons",
+    "cartoon_movie": "movies",
+    "cartoon_series_related_movie": "movies",
+    "anime_series_episode": "animeSeries",
+    "anime_series_related": "animeSeries",
+    "anime_ova": "animeSeries",
+    "anime_movie": "animeMovies",
+    "movie": "movies",
+    "unknown": "movies",
+    "bluray_remux": "movies"
+  },
+  "destinationsByKindMinConfidence": 40,
   "scope": {
     "videoOnly": true
+  },
+  "safety": {
+    "requireSourceUnderInbox": true,
+    "skipSourceIfUnderLibrary": true,
+    "libraryRootRelatives": [
+      "Video\\Сериалы",
+      "Video\\Мультсериалы",
+      "Video\\Фильмы",
+      "Video\\Аниме\\Сериалы",
+      "Video\\Аниме\\Фильмы"
+    ]
   },
   "preferCartoonsSubfolder": false,
   "displayNames": {

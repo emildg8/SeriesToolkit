@@ -250,10 +250,72 @@ if (-not (Test-Path -LiteralPath $InboxPath)) {
 
 $inboxNormForRel = $InboxPath.TrimEnd('\')
 
-$destSeries = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.series)
-$destCartoons = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.cartoons)
-$destMovies = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.movies)
-$destReview = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$policy.destinations.review)
+$destByKey = @{}
+foreach ($dp in $policy.destinations.PSObject.Properties) {
+    $destByKey[$dp.Name] = Expand-PolicyPath -NasRoot $nasRoot -Relative ([string]$dp.Value)
+}
+foreach ($req in @('series', 'movies', 'review')) {
+    if (-not $destByKey.ContainsKey($req)) { throw "Policy requires destinations.$req" }
+}
+if (-not $destByKey.ContainsKey('cartoons')) {
+    $destByKey['cartoons'] = $destByKey['series']
+}
+
+$destSeries = $destByKey['series']
+$destCartoons = $destByKey['cartoons']
+$destMovies = $destByKey['movies']
+$destReview = $destByKey['review']
+
+$destinationsByKindMap = @{}
+$destinationsByKindMinConf = 0
+if ($policy.PSObject.Properties.Name -contains 'destinationsByKind' -and $null -ne $policy.destinationsByKind) {
+    foreach ($kp in $policy.destinationsByKind.PSObject.Properties) {
+        $destinationsByKindMap[$kp.Name] = [string]$kp.Value
+    }
+    if ($policy.PSObject.Properties.Name -contains 'destinationsByKindMinConfidence') {
+        try { $destinationsByKindMinConf = [int]$policy.destinationsByKindMinConfidence } catch { $destinationsByKindMinConf = 0 }
+    }
+    foreach ($targetKey in $destinationsByKindMap.Values) {
+        if (-not $destByKey.ContainsKey($targetKey)) {
+            throw "destinationsByKind: unknown destinations key '$targetKey' - add it to policy.destinations."
+        }
+    }
+}
+
+$safetyRequireInbox = $false
+$safetySkipLibrary = $false
+$libraryRootsExpanded = [System.Collections.Generic.List[string]]::new()
+if ($policy.PSObject.Properties.Name -contains 'safety' -and $null -ne $policy.safety) {
+    $sf = $policy.safety
+    if ($sf.PSObject.Properties.Name -contains 'requireSourceUnderInbox') {
+        $safetyRequireInbox = [bool]$sf.requireSourceUnderInbox
+    }
+    if ($sf.PSObject.Properties.Name -contains 'skipSourceIfUnderLibrary') {
+        $safetySkipLibrary = [bool]$sf.skipSourceIfUnderLibrary
+    }
+    if ($sf.libraryRootRelatives) {
+        foreach ($rel in @($sf.libraryRootRelatives)) {
+            $normRel = ([string]$rel -replace '/', '\').TrimStart('\')
+            [void]$libraryRootsExpanded.Add((Expand-PolicyPath -NasRoot $nasRoot -Relative $normRel))
+        }
+    }
+}
+
+function Resolve-MediaInboxDestinationKey {
+    param(
+        [string]$ContentKind,
+        [int]$ContentConf,
+        [hashtable]$ByKindMap,
+        [int]$MinConfidence,
+        [string]$FallbackKey
+    )
+    if ($null -eq $ByKindMap -or $ByKindMap.Count -eq 0) { return $FallbackKey }
+    if ([string]::IsNullOrWhiteSpace($ContentKind)) { return $FallbackKey }
+    if ($ContentConf -lt $MinConfidence) { return $FallbackKey }
+    if ($ByKindMap.ContainsKey($ContentKind)) { return [string]$ByKindMap[$ContentKind] }
+    return $FallbackKey
+}
+
 $preferCartoons = $false
 if ($null -ne $policy.preferCartoonsSubfolder) { $preferCartoons = [bool]$policy.preferCartoonsSubfolder }
 $seasonFmt = [string]$policy.seasonFolderFormat
@@ -430,20 +492,64 @@ foreach ($f in $files) {
     $ckKind = ''
     $ckConf = ''
     $ckWhy = ''
+    $ckConfInt = 0
     if (Get-Command Get-MediaInboxVideoKindGuess -ErrorAction SilentlyContinue) {
         $kg = Get-MediaInboxVideoKindGuess -File $f -RelativePathFromInbox $relFromInbox
         if ($kg) {
             $ckKind = [string]$kg.Kind
             $ckConf = [string]$kg.Confidence
             $ckWhy = [string]$kg.Reason
+            $null = [int]::TryParse($ckConf, [ref]$ckConfInt)
         }
     }
-    $destRootSeries = if ($preferCartoons) { $destCartoons } else { $destSeries }
+
+    if ($safetyRequireInbox -and -not $f.FullName.StartsWith($prefixInbox, [StringComparison]::OrdinalIgnoreCase)) {
+        $rows.Add([pscustomobject]@{
+                SourceFullPath          = $f.FullName
+                DestFullPath            = $f.FullName
+                Kind                    = $cls.Kind
+                ContentKindGuess        = $ckKind
+                ContentKindConfidence   = $ckConf
+                ContentKindReason       = $ckWhy
+                DestRootKey             = ''
+                Confidence              = 5
+                Notes                   = 'skip_not_under_inbox'
+                DryRun                  = [bool]$DryRun
+            }) | Out-Null
+        continue
+    }
+    if ($safetySkipLibrary -and ($libraryRootsExpanded.Count -gt 0) -and (Test-PathUnderAnyRoot -FullPath $f.FullName -Roots @($libraryRootsExpanded.ToArray()))) {
+        $rows.Add([pscustomobject]@{
+                SourceFullPath          = $f.FullName
+                DestFullPath            = $f.FullName
+                Kind                    = $cls.Kind
+                ContentKindGuess        = $ckKind
+                ContentKindConfidence   = $ckConf
+                ContentKindReason       = $ckWhy
+                DestRootKey             = ''
+                Confidence              = 5
+                Notes                   = 'skip_source_in_library'
+                DryRun                  = [bool]$DryRun
+            }) | Out-Null
+        continue
+    }
+
+    $fallbackSeriesKey = if ($preferCartoons) { 'cartoons' } else { 'series' }
+    $seriesDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey $fallbackSeriesKey
+    if (-not $destByKey.ContainsKey($seriesDestKey)) { $seriesDestKey = $fallbackSeriesKey }
+    $destRootSeries = $destByKey[$seriesDestKey]
+
+    $movieDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey 'movies'
+    if (-not $destByKey.ContainsKey($movieDestKey)) { $movieDestKey = 'movies' }
+    $destMoviesResolved = $destByKey[$movieDestKey]
+
     $destFull = $null
     $newFileName = $f.Name
     $notes = [string]::Empty
+    $activeDestRootKey = ''
 
     if ($cls.Kind -eq 'series') {
+        $activeDestRootKey = $seriesDestKey
         $seriesRow = Get-CachedSeriesTmdbRow -SeriesGuess $cls.SeriesGuess -ApiKey $key -Lang $tmdbLang
         if (-not [string]::IsNullOrWhiteSpace($seriesRow.Notes)) { $notes = $seriesRow.Notes }
         $seriesFolder = [string]$seriesRow.SeriesFolder
@@ -507,6 +613,7 @@ foreach ($f in $files) {
             $destFull = Join-Path $destReview $f.Name
             $newFileName = $f.Name
             $cls.Confidence = 25
+            $activeDestRootKey = 'review'
             $notes = if ([string]::IsNullOrWhiteSpace($notes)) { 'movie_needs_year_or_tmdb' } else { "$notes;movie_needs_year_or_tmdb" }
         }
         else {
@@ -516,7 +623,8 @@ foreach ($f in $files) {
                 -replace '\{Year\}', $yearToken `
                 -replace '\{Ext\}', $f.Extension.TrimStart('.')
             $newFileName = ($newFileName -replace '\s+', ' ').Trim()
-            $destFull = Join-Path $destMovies $newFileName
+            $destFull = Join-Path $destMoviesResolved $newFileName
+            $activeDestRootKey = $movieDestKey
         }
         if (-not $UseTmdb -or [string]::IsNullOrWhiteSpace($key)) {
             if ($cls.Confidence -lt 35) { $cls.Confidence = 35 }
@@ -527,28 +635,40 @@ foreach ($f in $files) {
     if ($null -eq $destFull) {
         $destFull = Join-Path $destReview $f.Name
         $notes = 'unresolved'
+        $activeDestRootKey = 'review'
     }
 
     if ((Test-Path -LiteralPath $destFull) -and ($destFull -ne $f.FullName)) {
         $destFull = Join-Path $destReview ("dup_{0}_{1}" -f $stamp, $f.Name)
         $notes = 'collision_to_review'
+        $activeDestRootKey = 'review'
         $cls.Confidence = [math]::Min($cls.Confidence, 20)
     }
 
+    if ([string]::IsNullOrWhiteSpace($activeDestRootKey)) {
+        if ($cls.Kind -eq 'series') { $activeDestRootKey = $seriesDestKey }
+        else { $activeDestRootKey = $movieDestKey }
+    }
+
     $rows.Add([pscustomobject]@{
-            SourceFullPath       = $f.FullName
-            DestFullPath         = $destFull
-            Kind                 = $cls.Kind
-            ContentKindGuess     = $ckKind
-            ContentKindConfidence = $ckConf
-            ContentKindReason    = $ckWhy
-            Confidence           = $cls.Confidence
-            Notes                = $notes
-            DryRun               = [bool]$DryRun
+            SourceFullPath          = $f.FullName
+            DestFullPath            = $destFull
+            Kind                    = $cls.Kind
+            ContentKindGuess        = $ckKind
+            ContentKindConfidence   = $ckConf
+            ContentKindReason       = $ckWhy
+            DestRootKey             = $activeDestRootKey
+            Confidence              = $cls.Confidence
+            Notes                   = $notes
+            DryRun                    = [bool]$DryRun
         }) | Out-Null
 }
 
 foreach ($bdRoot in $blurayRoots) {
+    $blurayDestKey = Resolve-MediaInboxDestinationKey -ContentKind 'bluray_remux' -ContentConf 100 -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey 'movies'
+    if (-not $destByKey.ContainsKey($blurayDestKey)) { $blurayDestKey = 'movies' }
+    $destBlurayMoviesRoot = $destByKey[$blurayDestKey]
+    $bdDestRootKey = $blurayDestKey
     $folderBase = [System.IO.Path]::GetFileName($bdRoot)
     $year = Get-SortYearTokenFromText $folderBase
     $query = Remove-SortReleaseTechnicalTokens ($folderBase -replace '\b((?:19|20)\d{2})\b', ' ')
@@ -578,21 +698,23 @@ foreach ($bdRoot in $blurayRoots) {
     }
     if ([string]::IsNullOrWhiteSpace($year)) { $year = '0000' }
     # Одна папка под релиз в «Фильмы», без «(год)» в имени каталога.
-    $destFull = Join-Path $destMovies $movieTitleRu
+    $destFull = Join-Path $destBlurayMoviesRoot $movieTitleRu
     if ((Test-Path -LiteralPath $destFull) -and $destFull -ne $bdRoot) {
         $destFull = Join-Path $destReview ("bd_dup_{0}_{1}" -f $stamp, $folderBase)
         $notes += ';collision_folder_to_review'
+        $bdDestRootKey = 'review'
     }
     $rows.Add([pscustomobject]@{
-            SourceFullPath         = $bdRoot
-            DestFullPath           = $destFull
-            Kind                   = 'bluray_remux'
-            ContentKindGuess         = 'bluray_remux'
-            ContentKindConfidence    = ''
-            ContentKindReason        = 'bdmv_stream'
-            Confidence             = if ($mid) { 72 } else { 35 }
-            Notes                    = $notes
-            DryRun                   = [bool]$DryRun
+            SourceFullPath          = $bdRoot
+            DestFullPath            = $destFull
+            Kind                    = 'bluray_remux'
+            ContentKindGuess        = 'bluray_remux'
+            ContentKindConfidence   = ''
+            ContentKindReason       = 'bdmv_stream'
+            DestRootKey             = $bdDestRootKey
+            Confidence              = if ($mid) { 72 } else { 35 }
+            Notes                     = $notes
+            DryRun                    = [bool]$DryRun
         }) | Out-Null
 }
 
@@ -602,6 +724,7 @@ $applied = 0
 $skipped = 0
 if ($Apply) {
     foreach ($r in $rows) {
+        if ($r.Notes -match '^skip_') { $skipped++; continue }
         if ($r.SourceFullPath -eq $r.DestFullPath) { $skipped++; continue }
         if ($r.Kind -eq 'bluray_remux') {
             $destParent = Split-Path -Parent $r.DestFullPath
