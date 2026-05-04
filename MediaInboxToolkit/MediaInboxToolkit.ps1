@@ -3,7 +3,7 @@
 .SYNOPSIS
   Точка входа MediaInboxToolkit — входная сортировка видео (NAS / локально).
 .NOTES
-  Двухшаговый сценарий с SeriesToolkit: MediaInboxToolkit.Orchestrate.ps1 (-SeriesToolkitRootsFromLastCsv).
+  Двухшаговый сценарий: MediaInboxToolkit.Orchestrate.ps1. GUI: Start-MediaInboxToolkitGui.ps1.
 #>
 [CmdletBinding()]
 param(

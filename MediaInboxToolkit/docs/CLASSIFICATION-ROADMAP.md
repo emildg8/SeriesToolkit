@@ -15,4 +15,6 @@
 | 2.9 | Аниме-сериал «ветка» | Связанные шоу TMDB |
 | 2.10 | OVA к основному аниме | OVA/спешл; parent TV в TMDB |
 
-Текущая реализация (`MediaInboxToolkit.ContentKinds.ps1`): **эвристики v0** (эпизодный код, ключевые слова anime/мульт). Дальше: жанры TMDB, `keywords`, длительность, коллекции, локальный **rules store** (см. OFFLINE-METADATA).
+Текущая реализация (`MediaInboxToolkit.ContentKinds.ps1`): **эвристики v0** (эпизодный код, ключевые слова anime/мульт). Дополнительно `MediaInboxToolkit.TmdbKindRefine.ps1`: при включённом `tmdbKindRefinement` в политике — жанр **16 (Animation)** на TV/movie + страны происхождения (JP/KR/CN/TW → аниме-ветка, иначе мульт).
+
+Дальше: `keywords`, длительность, коллекции, локальный **rules store** (см. OFFLINE-METADATA).

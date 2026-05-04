@@ -57,6 +57,10 @@ $contentKindsPath = Join-Path $PSScriptRoot 'MediaInboxToolkit.ContentKinds.ps1'
 if (Test-Path -LiteralPath $contentKindsPath) {
     . $contentKindsPath
 }
+$tmdbKindRefinePath = Join-Path $PSScriptRoot 'MediaInboxToolkit.TmdbKindRefine.ps1'
+if (Test-Path -LiteralPath $tmdbKindRefinePath) {
+    . $tmdbKindRefinePath
+}
 
 function ConvertTo-SafeFolderName([string]$Name) {
     if ([string]::IsNullOrWhiteSpace($Name)) { return '_' }
@@ -341,6 +345,22 @@ if (($policy.PSObject.Properties.Name -contains 'blurayRemux') -and $policy.blur
     }
 }
 
+$tmdbKindRefineEnabled = $UseTmdb
+if (($policy.PSObject.Properties.Name -contains 'tmdbKindRefinement') -and $null -ne $policy.tmdbKindRefinement) {
+    $tkr = $policy.tmdbKindRefinement
+    if ($tkr.PSObject.Properties.Name -contains 'enabled') {
+        $tmdbKindRefineEnabled = [bool]$tkr.enabled -and $UseTmdb
+    }
+}
+
+$createDestRootsOnApply = $true
+if (($policy.PSObject.Properties.Name -contains 'folders') -and $null -ne $policy.folders) {
+    $fd = $policy.folders
+    if ($fd.PSObject.Properties.Name -contains 'createDestinationRootsOnApply') {
+        $createDestRootsOnApply = [bool]$fd.createDestinationRootsOnApply
+    }
+}
+
 $epFallbackFmt = 'Серия {0}'
 if (($policy.PSObject.Properties.Name -contains 'episodeTitleFallback') -and -not [string]::IsNullOrWhiteSpace([string]$policy.episodeTitleFallback)) {
     $epFallbackFmt = [string]$policy.episodeTitleFallback
@@ -480,6 +500,43 @@ function Resolve-SortEpisodeDisplayTitle {
     return (ConvertTo-SafeFolderName ($FallbackFmt -f $en))
 }
 
+$mitTvDetailById = @{}
+$mitMovieDetailById = @{}
+
+function Get-MitCachedTmdbTvDetails {
+    param(
+        [int]$TvId,
+        [string]$ApiKey,
+        [string]$Lang
+    )
+    if ($TvId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
+    $k = "${TvId}|${Lang}"
+    if ($mitTvDetailById.ContainsKey($k)) { return $mitTvDetailById[$k] }
+    $d = $null
+    if (Get-Command Get-TmdbTvDetailsLocalized -ErrorAction SilentlyContinue) {
+        $d = Get-TmdbTvDetailsLocalized -TvId $TvId -ApiKey $ApiKey -Language $Lang
+    }
+    $mitTvDetailById[$k] = $d
+    return $d
+}
+
+function Get-MitCachedTmdbMovieDetails {
+    param(
+        [int]$MovieId,
+        [string]$ApiKey,
+        [string]$Lang
+    )
+    if ($MovieId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return $null }
+    $k = "${MovieId}|${Lang}"
+    if ($mitMovieDetailById.ContainsKey($k)) { return $mitMovieDetailById[$k] }
+    $d = $null
+    if (Get-Command Get-TmdbMovieDetailsLocalized -ErrorAction SilentlyContinue) {
+        $d = Get-TmdbMovieDetailsLocalized -MovieId $MovieId -ApiKey $ApiKey -Language $Lang
+    }
+    $mitMovieDetailById[$k] = $d
+    return $d
+}
+
 $rows = [System.Collections.Generic.List[object]]::new()
 
 foreach ($f in $files) {
@@ -535,22 +592,30 @@ foreach ($f in $files) {
     }
 
     $fallbackSeriesKey = if ($preferCartoons) { 'cartoons' } else { 'series' }
-    $seriesDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey $fallbackSeriesKey
-    if (-not $destByKey.ContainsKey($seriesDestKey)) { $seriesDestKey = $fallbackSeriesKey }
-    $destRootSeries = $destByKey[$seriesDestKey]
-
-    $movieDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey 'movies'
-    if (-not $destByKey.ContainsKey($movieDestKey)) { $movieDestKey = 'movies' }
-    $destMoviesResolved = $destByKey[$movieDestKey]
-
+    $seriesDestKey = $fallbackSeriesKey
+    $movieDestKey = 'movies'
     $destFull = $null
     $newFileName = $f.Name
     $notes = [string]::Empty
     $activeDestRootKey = ''
 
     if ($cls.Kind -eq 'series') {
-        $activeDestRootKey = $seriesDestKey
         $seriesRow = Get-CachedSeriesTmdbRow -SeriesGuess $cls.SeriesGuess -ApiKey $key -Lang $tmdbLang
+        if ($tmdbKindRefineEnabled -and $seriesRow.TvId -and (Get-Command Resolve-MediaInboxContentKindFromTmdbTv -ErrorAction SilentlyContinue)) {
+            $tvDet = Get-MitCachedTmdbTvDetails -TvId ([int]$seriesRow.TvId) -ApiKey $key -Lang $tmdbLang
+            $adjTv = Resolve-MediaInboxContentKindFromTmdbTv -TvDetails $tvDet -HeuristicKind $ckKind -HeuristicConfidence $ckConfInt
+            if ($adjTv) {
+                $ckKind = [string]$adjTv.Kind
+                $ckConfInt = [int]$adjTv.Confidence
+                $ckConf = [string]$adjTv.Confidence
+                $whyAdd = [string]$adjTv.Reason
+                $ckWhy = if ([string]::IsNullOrWhiteSpace($ckWhy)) { $whyAdd } else { "$ckWhy|$whyAdd" }
+            }
+        }
+        $seriesDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey $fallbackSeriesKey
+        if (-not $destByKey.ContainsKey($seriesDestKey)) { $seriesDestKey = $fallbackSeriesKey }
+        $destRootSeries = $destByKey[$seriesDestKey]
+        $activeDestRootKey = $seriesDestKey
         if (-not [string]::IsNullOrWhiteSpace($seriesRow.Notes)) { $notes = $seriesRow.Notes }
         $seriesFolder = [string]$seriesRow.SeriesFolder
         $seasonFolder = $seasonFmt -f $cls.Season
@@ -578,6 +643,7 @@ foreach ($f in $files) {
     else {
         $year = ''
         $movieTitle = ConvertTo-SafeFolderName $cls.QueryMovie
+        $mid = $null
         $my = [regex]::Match([string]$cls.QueryMovie, '\((\d{4})\)\s*$')
         if ($my.Success) { $year = $my.Groups[1].Value }
         if ([string]::IsNullOrWhiteSpace($year)) {
@@ -607,6 +673,20 @@ foreach ($f in $files) {
                 $cls.Confidence = 75
             }
         }
+        if ($tmdbKindRefineEnabled -and $mid -and (Get-Command Resolve-MediaInboxContentKindFromTmdbMovie -ErrorAction SilentlyContinue)) {
+            $mDet = Get-MitCachedTmdbMovieDetails -MovieId $mid -ApiKey $key -Lang $tmdbLang
+            $adjM = Resolve-MediaInboxContentKindFromTmdbMovie -MovieDetails $mDet -HeuristicKind $ckKind -HeuristicConfidence $ckConfInt
+            if ($adjM) {
+                $ckKind = [string]$adjM.Kind
+                $ckConfInt = [int]$adjM.Confidence
+                $ckConf = [string]$adjM.Confidence
+                $whyAddM = [string]$adjM.Reason
+                $ckWhy = if ([string]::IsNullOrWhiteSpace($ckWhy)) { $whyAddM } else { "$ckWhy|$whyAddM" }
+            }
+        }
+        $movieDestKey = Resolve-MediaInboxDestinationKey -ContentKind $ckKind -ContentConf $ckConfInt -ByKindMap $destinationsByKindMap -MinConfidence $destinationsByKindMinConf -FallbackKey 'movies'
+        if (-not $destByKey.ContainsKey($movieDestKey)) { $movieDestKey = 'movies' }
+        $destMoviesResolved = $destByKey[$movieDestKey]
         if ([string]::IsNullOrWhiteSpace($year)) { $year = '0000' }
         $tmdbMovieOk = $notes -match '^tmdb_movie:\d+'
         if ($year -eq '0000' -and -not $tmdbMovieOk) {
@@ -723,6 +803,16 @@ $rows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
 $applied = 0
 $skipped = 0
 if ($Apply) {
+    if ($createDestRootsOnApply) {
+        $seenRoots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($rootPath in $destByKey.Values) {
+            if ([string]::IsNullOrWhiteSpace($rootPath)) { continue }
+            if (-not $seenRoots.Add($rootPath)) { continue }
+            if (-not (Test-Path -LiteralPath $rootPath)) {
+                New-Item -ItemType Directory -Path $rootPath -Force | Out-Null
+            }
+        }
+    }
     foreach ($r in $rows) {
         if ($r.Notes -match '^skip_') { $skipped++; continue }
         if ($r.SourceFullPath -eq $r.DestFullPath) { $skipped++; continue }
@@ -750,6 +840,7 @@ $summary = @(
     "Policy: $PolicyPath"
     "Inbox: $InboxPath"
     "Apply: $Apply  DryRun: $DryRun  UseTmdb: $UseTmdb  BlurayRoots: $($blurayRoots.Count)"
+    "TmdbKindRefine: $tmdbKindRefineEnabled  CreateDestRootsOnApply: $createDestRootsOnApply"
     "Planned rows: $($rows.Count)  Moved: $applied  SkippedSamePath: $skipped"
     "CSV: $csvPath"
 ) -join "`r`n"

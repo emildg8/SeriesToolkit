@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "meta": {
-    "description": "Нейтральный шаблон: замените nasShareRoot и относительные пути. Персональный пример см. sort-inbox.library-layout-emilian.example.json.",
+    "description": "ПРИМЕР одной библиотеки (не универсальный): скопируйте в sort-inbox.json и подправьте nasShareRoot / inboxRelative. Другой пользователь задаёт свои пути или оставляет только нужные ключи в destinations.",
     "updatedAt": "2026-05-04"
   },
-  "nasShareRoot": "\\\\FILESERVER\\media",
+  "nasShareRoot": "\\\\Emilian_TNAS\\emildg8",
   "inboxRelative": "Video\\Sort",
   "destinations": {
     "series": "Video\\Сериалы",

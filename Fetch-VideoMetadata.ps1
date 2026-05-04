@@ -1313,6 +1313,55 @@ function Get-TmdbMovieDetailsLocalized([int]$MovieId, [string]$ApiKey, [string]$
     }
 }
 
+# Жанры из ответа TMDB (детали tv/movie или компактный hit с genre_ids).
+function Get-TmdbGenreIdsFromMediaObject([object]$Media) {
+    if (-not $Media) { return @() }
+    $out = [System.Collections.Generic.HashSet[int]]::new()
+    $pn = $Media.PSObject.Properties.Name
+    if ($pn -contains 'genres' -and $null -ne $Media.genres) {
+        foreach ($g in @($Media.genres)) {
+            if ($null -eq $g) { continue }
+            $gn = $g.PSObject.Properties.Name
+            if ($gn -contains 'id') {
+                try { [void]$out.Add([int]$g.id) } catch { }
+            }
+        }
+    }
+    elseif ($pn -contains 'genre_ids' -and $null -ne $Media.genre_ids) {
+        foreach ($gid in @($Media.genre_ids)) {
+            try { [void]$out.Add([int]$gid) } catch { }
+        }
+    }
+    return @($out)
+}
+
+function Get-TmdbTvOriginCountryCodes([object]$Tv) {
+    if (-not $Tv) { return @() }
+    if ($Tv.PSObject.Properties.Name -contains 'origin_country' -and $null -ne $Tv.origin_country) {
+        return @($Tv.origin_country | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+    return @()
+}
+
+function Get-TmdbMovieOriginCountryCodes([object]$Movie) {
+    if (-not $Movie) { return @() }
+    if ($Movie.PSObject.Properties.Name -contains 'origin_country' -and $null -ne $Movie.origin_country) {
+        return @($Movie.origin_country | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+    if ($Movie.PSObject.Properties.Name -contains 'production_countries' -and $null -ne $Movie.production_countries) {
+        $list = [System.Collections.Generic.List[string]]::new()
+        foreach ($pc in @($Movie.production_countries)) {
+            if ($null -eq $pc) { continue }
+            if ($pc.PSObject.Properties.Name -contains 'iso_3166_1') {
+                $iso = [string]$pc.iso_3166_1
+                if (-not [string]::IsNullOrWhiteSpace($iso)) { [void]$list.Add($iso) }
+            }
+        }
+        return @($list)
+    }
+    return @()
+}
+
 function Get-TmdbMovieAlternativeTitlesRaw([int]$MovieId, [string]$ApiKey) {
     if ($MovieId -le 0 -or [string]::IsNullOrWhiteSpace($ApiKey)) { return @() }
     Initialize-WebClient

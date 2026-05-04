@@ -16,7 +16,13 @@ cd <корень репозитория>\MediaInboxToolkit
 powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit.ps1 -UseTmdb -DryRun
 ```
 
-Политика по умолчанию: `.\sort-inbox.example.json`. Свой inbox: `-InboxPath '\\NAS\share\Video\Sort'`.
+Минимальный GUI (WinForms):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-MediaInboxToolkitGui.ps1
+```
+
+Политика по умолчанию: `.\sort-inbox.example.json` (нейтральные пути). Пример разнесённой библиотеки с папками «Сериалы / Фильмы / Аниме / …»: `.\sort-inbox.library-layout-emilian.example.json` — скопируйте и замените `nasShareRoot` на свой UNC; лишние ключи в `destinations` можно удалить. При `-Apply` и `folders.createDestinationRootsOnApply: true` целевые корни из политики **создаются**, если их ещё нет.
 
 После проверки CSV в `LOGS\`: добавьте `-Apply`.
 
@@ -49,6 +55,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\MediaInboxToolkit\Publish-
 - **`destinationsByKind`** — карта вида контента (`MediaInboxToolkit.ContentKinds.ps1`) → имя ключа из `destinations`.
 - **`destinationsByKindMinConfidence`** — минимальная уверенность эвристики (0–100), иначе используется прежняя логика (`preferCartoonsSubfolder` / сериал vs фильм).
 - **`safety`** — `requireSourceUnderInbox`, `skipSourceIfUnderLibrary` + `libraryRootRelatives`, чтобы не трогать файлы уже в библиотеке.
+- **`tmdbKindRefinement`** — уточнение «аниме vs мульт» по TMDB (жанр Animation + регион).
+- **`folders.createDestinationRootsOnApply`** — перед переносом создать все каталоги из `destinations`, если отсутствуют.
 
 ## Документация
 
