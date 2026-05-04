@@ -59,6 +59,7 @@
 - Учёт `series-aliases` / локальных overrides для «плохих» имён.
 - Связка с основным движком SeriesToolkit для финальной нормализации эпизодов после раскладки по сериалам.
 - Политика: **`destinationsByKind`** / **`destinationsByKindMinConfidence`** — выбор целевой ветки (`animeSeries`, `movies`, …) по эвристике вида контента; **`safety`** — не переносить файлы вне inbox и/или уже лежащие под корнями библиотеки.
+- **`classification`** — `folderSeasonContext` (родитель `Season N` / `N season` + файл `NN. …`); `tvSpecialFilenameBoost` (Robot Chicken Star Wars Episode I/II/III → TV); `movies.allowMissingYearIfTmdbMatched`; fallback-запросы TMDB movie по коротким вариантам строки.
 - **`tmdbKindRefinement`** + `Fetch-VideoMetadata.ps1` (`Get-TmdbGenreIdsFromMediaObject`, страны) — уточнение аниме/мульт после эвристик.
 - **`folders.createDestinationRootsOnApply`** — создание целевых корней при `-Apply`, если папок ещё нет.
 - `MediaInboxToolkit.Orchestrate.ps1`: опционально **`-SeriesToolkitRootsFromLastCsv`** — корни сериалов из последнего отчёта `sort-inbox-*.csv`.
